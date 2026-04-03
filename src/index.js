@@ -1,4 +1,5 @@
-import { PrismaClient } from '@prisma/client';
+import pkg from '@prisma/client';
+const { PrismaClient } = pkg;
 import { toNodeHandler } from 'better-auth/node';
 import cors from 'cors';
 import 'dotenv/config';
