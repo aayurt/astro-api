@@ -1366,7 +1366,15 @@ app.post('/api/ai/chat', getUser, async (req, res) => {
     try {
       console.log('👺 Processing Qwen with Master Prompt...');
       aiResponse = await askQwenLib(masterPrompt);
-      const jsonResponse = JSON.parse(aiResponse);
+      const jsonResponse = safeParseJSON(aiResponse, {
+        summary:
+          "I'm sorry, I'm currently unable to access my celestial insights. Please try again later.",
+        time_context: 'N/A',
+        astrological_analysis: 'N/A',
+        timeline_breakdown: 'N/A',
+        real_world_impact: 'N/A',
+        practical_guidance: 'N/A',
+      });
       const fullText = [
         jsonResponse.summary,
         jsonResponse.time_context,
@@ -1374,7 +1382,7 @@ app.post('/api/ai/chat', getUser, async (req, res) => {
         jsonResponse.timeline_breakdown,
         jsonResponse.real_world_impact,
         jsonResponse.practical_guidance,
-      ].join('\n    \n               ');
+      ].join('\n\n');
       aiResponse = fullText;
       console.log('✅ Qwen response received successfully');
     } catch (err) {

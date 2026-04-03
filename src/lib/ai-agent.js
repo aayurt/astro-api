@@ -25,8 +25,8 @@ Return JSON only.
 
 { 
   "type": "natal | prediction | history | transit | general", 
-  "time_context": "past | present | future | unknown", 
-  "time_reference": "string or null" 
+  "time_context": "past | present | future", 
+  "time_reference": "string (default: 'now')" 
 } 
 `;
 
@@ -48,18 +48,24 @@ Question:
 // ==============================
 // 3. SAFE JSON PARSER
 // ==============================
-export function safeParseJSON(text) {
+export function safeParseJSON(text, fallback = {}) {
   try {
-    // Qwen might return markdown blocks
+    // Qwen might return markdown blocks or conversational text around the JSON
     const jsonMatch = text.match(/\{[\s\S]*\}/);
-    const cleanText = jsonMatch ? jsonMatch[0] : text;
+    let cleanText = jsonMatch ? jsonMatch[0] : text;
+
+    // Handle common AI JSON generation errors:
+    // 1. Unescaped newlines within string values
+    // We'll replace real newlines with \n inside the string values
+    cleanText = cleanText.replace(/: "([\s\S]*?)"/g, (match, content) => {
+      const escapedContent = content.replace(/\n/g, '\\n');
+      return `: "${escapedContent}"`;
+    });
+
     return JSON.parse(cleanText);
   } catch (e) {
-    return {
-      type: QUERY_TYPES.GENERAL,
-      time_context: 'unknown',
-      time_reference: null,
-    };
+    console.error('JSON Parse Error:', e.message);
+    return fallback;
   }
 }
 
@@ -67,7 +73,7 @@ export function safeParseJSON(text) {
 // 4. TIME RESOLVER
 // ==============================
 export function resolveTimeReference(ref) {
-  if (!ref) return null;
+  if (!ref || ref === 'now' || ref === 'present') return null;
 
   const now = new Date();
 
@@ -177,51 +183,107 @@ export function mapTimeToDasha(rawData, classification) {
 // ==============================
 // 7. PAYLOAD BUILDERS
 // ==============================
-export function buildNatalPayload(data) {
+export function buildNatalPayload(data, dashaContext) {
+  const getPlanetInfo = (p) => ({
+    sign: p?.zodiac_sign_name,
+    house: p?.house_number,
+  });
+
   return {
-    ascendant: data.natal?.Ascendant?.zodiac_sign_name,
-    sun: data.natal?.Sun?.zodiac_sign_name,
-    moon: data.natal?.Moon?.zodiac_sign_name,
+    natal: {
+      ascendant: getPlanetInfo(data.natal?.Ascendant),
+      sun: getPlanetInfo(data.natal?.Sun),
+      moon: getPlanetInfo(data.natal?.Moon),
+      mars: getPlanetInfo(data.natal?.Mars),
+      mercury: getPlanetInfo(data.natal?.Mercury),
+      jupiter: getPlanetInfo(data.natal?.Jupiter),
+      venus: getPlanetInfo(data.natal?.Venus),
+      saturn: getPlanetInfo(data.natal?.Saturn),
+      rahu: getPlanetInfo(data.natal?.Rahu),
+      ketu: getPlanetInfo(data.natal?.Ketu),
+    },
+    dashatimings: dashaContext,
   };
 }
 
 export function buildHistoryPayload(data, dashaContext) {
+  const getPlanetInfo = (p) => ({
+    sign: p?.zodiac_sign_name,
+    house: p?.house_number,
+  });
+
   return {
     natal: {
-      ascendant: data.natal?.Ascendant?.zodiac_sign_name,
-      moon: data.natal?.Moon?.zodiac_sign_name,
+      ascendant: getPlanetInfo(data.natal?.Ascendant),
+      sun: getPlanetInfo(data.natal?.Sun),
+      moon: getPlanetInfo(data.natal?.Moon),
+      mars: getPlanetInfo(data.natal?.Mars),
+      mercury: getPlanetInfo(data.natal?.Mercury),
+      jupiter: getPlanetInfo(data.natal?.Jupiter),
+      venus: getPlanetInfo(data.natal?.Venus),
+      saturn: getPlanetInfo(data.natal?.Saturn),
+      rahu: getPlanetInfo(data.natal?.Rahu),
+      ketu: getPlanetInfo(data.natal?.Ketu),
     },
-    dasha: dashaContext,
+    dashatimings: dashaContext,
   };
 }
 
 export function buildPredictionPayload(data, dashaContext, classification) {
   const isFuture = classification?.time_context === 'future';
+  const getPlanetInfo = (p) => ({
+    sign: p?.zodiac_sign_name,
+    house: p?.house_number,
+  });
 
   return {
     natal: {
-      sun: data.natal?.Sun?.zodiac_sign_name,
-      moon: data.natal?.Moon?.zodiac_sign_name,
+      ascendant: getPlanetInfo(data.natal?.Ascendant),
+      sun: getPlanetInfo(data.natal?.Sun),
+      moon: getPlanetInfo(data.natal?.Moon),
+      mars: getPlanetInfo(data.natal?.Mars),
+      mercury: getPlanetInfo(data.natal?.Mercury),
+      jupiter: getPlanetInfo(data.natal?.Jupiter),
+      venus: getPlanetInfo(data.natal?.Venus),
+      saturn: getPlanetInfo(data.natal?.Saturn),
+      rahu: getPlanetInfo(data.natal?.Rahu),
+      ketu: getPlanetInfo(data.natal?.Ketu),
     },
-    dasha: dashaContext,
+    dashatimings: dashaContext,
     ...(isFuture
       ? {}
       : {
           transit: {
-            saturn: data.transit?.Saturn?.zodiac_sign_name,
-            jupiter: data.transit?.Jupiter?.zodiac_sign_name,
+            sun: getPlanetInfo(data.transit?.Sun),
+            moon: getPlanetInfo(data.transit?.Moon),
+            saturn: getPlanetInfo(data.transit?.Saturn),
+            jupiter: getPlanetInfo(data.transit?.Jupiter),
+            rahu: getPlanetInfo(data.transit?.Rahu),
+            ketu: getPlanetInfo(data.transit?.Ketu),
           },
         }),
   };
 }
 
-export function buildTransitPayload(data) {
+export function buildTransitPayload(data, dashaContext) {
+  const getPlanetInfo = (p) => ({
+    sign: p?.zodiac_sign_name,
+    house: p?.house_number,
+  });
+
   return {
     transit: {
-      sun: data.transit?.Sun?.zodiac_sign_name,
-      moon: data.transit?.Moon?.zodiac_sign_name,
-      saturn: data.transit?.Saturn?.zodiac_sign_name,
+      sun: getPlanetInfo(data.transit?.Sun),
+      moon: getPlanetInfo(data.transit?.Moon),
+      mars: getPlanetInfo(data.transit?.Mars),
+      mercury: getPlanetInfo(data.transit?.Mercury),
+      jupiter: getPlanetInfo(data.transit?.Jupiter),
+      venus: getPlanetInfo(data.transit?.Venus),
+      saturn: getPlanetInfo(data.transit?.Saturn),
+      rahu: getPlanetInfo(data.transit?.Rahu),
+      ketu: getPlanetInfo(data.transit?.Ketu),
     },
+    dashatimings: dashaContext,
   };
 }
 
@@ -243,13 +305,13 @@ export function buildAgentPayload(rawData, classification) {
       );
 
     case QUERY_TYPES.NATAL:
-      return buildNatalPayload(rawData);
+      return buildNatalPayload(rawData, enriched.dasha_context);
 
     case QUERY_TYPES.TRANSIT:
-      return buildTransitPayload(rawData);
+      return buildTransitPayload(rawData, enriched.dasha_context);
 
     default:
-      return buildNatalPayload(rawData);
+      return buildNatalPayload(rawData, enriched.dasha_context);
   }
 }
 
@@ -268,13 +330,17 @@ export async function processUserQuery({
   const response = await callQwen(prompt);
   console.log('Qwen response received successfully');
 
-  const classification = safeParseJSON(response);
+  const classification = safeParseJSON(response, {
+    type: QUERY_TYPES.GENERAL,
+    time_context: 'present',
+    time_reference: 'now',
+  });
   console.log('Classification parsed successfully');
   console.log('Building Payload...');
   console.log('raw', rawData);
   const payload = buildAgentPayload(rawData, classification);
   console.log('Payload built successfully');
-
+  console.log({ payload });
   return {
     classification,
     payload,
