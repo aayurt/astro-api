@@ -12,6 +12,7 @@ import {
 import { getYoginiDasha } from './lib/astrology.js';
 import { auth } from './lib/auth.js';
 import { askQwen as askQwenLib } from './lib/qwen.js';
+import { success } from 'zod';
 
 const prisma = new PrismaClient();
 
@@ -41,6 +42,10 @@ const getUser = async (req, res, next) => {
   req.user = session.user;
   next();
 };
+
+app.get('/api', async (req, res) => {
+  res.json({ success: true });
+});
 
 // Location Search API (using Nominatim - OpenStreetMap)
 app.post('/api/location/search', getUser, async (req, res) => {
