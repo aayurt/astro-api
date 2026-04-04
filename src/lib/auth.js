@@ -1,7 +1,7 @@
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import pkg from '@prisma/client';
-import { trustedOrigins } from '../trustedDomains';
+import { trustedOrigins } from '../trustedDomains.js';
 const { PrismaClient } = pkg;
 
 const prisma = new PrismaClient();
