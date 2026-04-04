@@ -34,6 +34,7 @@ const authHandler = toNodeHandler(auth);
 
 app.all('/api/auth/*path', async (req, res, next) => {
   try {
+    console.log('=======\n', req.url);
     console.log('=======', req.path);
     return auth.handler(req, res);
   } catch (err) {
