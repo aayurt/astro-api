@@ -32,6 +32,7 @@ const authHandler = toNodeHandler(auth);
 
 app.all('/api/auth/*path', async (req, res, next) => {
   try {
+    console.log('=======');
     return authHandler(req, res);
   } catch (err) {
     console.error('Better Auth error:', err);
