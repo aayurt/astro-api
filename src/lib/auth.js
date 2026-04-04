@@ -31,6 +31,7 @@ export const auth = betterAuth({
     },
   },
   advanced: {
+    trustProxy: true,
     crossDomain: {
       enabled: true,
     },
