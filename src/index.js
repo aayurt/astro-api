@@ -27,6 +27,7 @@ app.use(
 );
 
 // better-auth handler
+console.log('Better Auth URL: ' + process.env.BETTER_AUTH_URL);
 app.all('/api/auth/*path', toNodeHandler(auth));
 
 app.use(express.json());
