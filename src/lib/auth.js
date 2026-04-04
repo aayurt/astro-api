@@ -5,6 +5,10 @@ import { trustedOrigins } from '../trustedDomains.js';
 const { PrismaClient } = pkg;
 
 const prisma = new PrismaClient();
+const crossSiteCookieAttributes = {
+  sameSite: 'none',
+  secure: true,
+};
 
 export const auth = betterAuth({
   database: prismaAdapter(prisma, {
@@ -36,6 +40,7 @@ export const auth = betterAuth({
     crossDomain: {
       enabled: true,
     },
+    defaultCookieAttributes: crossSiteCookieAttributes,
     useSecureCookies: process.env.BETTER_AUTH_URL?.startsWith('https'), // For local HTTP development
     cookiePrefix: 'astro-app', // Prevent localhost cookie collisions
     session: {
