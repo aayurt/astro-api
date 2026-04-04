@@ -28,12 +28,14 @@ app.use(
 
 // better-auth handler
 console.log('Better Auth URL: ' + process.env.BETTER_AUTH_URL);
-app.all(
-  '/api/auth/*path',
-  toNodeHandler(auth).catch((err) => {
-    console.error(err);
-  }),
-);
+app.all('/api/auth/*path', async (req, res, next) => {
+  try {
+    return authHandler(req, res);
+  } catch (err) {
+    console.error('Better Auth error:', err);
+    next(err);
+  }
+});
 
 app.use(express.json());
 
