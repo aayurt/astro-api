@@ -30,15 +30,8 @@ app.use(
 
 // better-auth handler
 console.log('Better Auth URL: ' + process.env.BETTER_AUTH_URL);
-app.all('/astro/api/auth/*path', toNodeHandler(auth));
-app.all('/api/auth/*path', async (req, res, next) => {
-  try {
-    return toNodeHandler(auth)(req, res);
-  } catch (err) {
-    console.error('Better Auth error:', err);
-    next(err);
-  }
-});
+app.all('/astro/api/auth/{*any}', toNodeHandler(auth));
+app.all('/api/auth/{*any}', toNodeHandler(auth));
 
 app.use(express.json());
 
