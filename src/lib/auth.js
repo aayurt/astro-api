@@ -40,6 +40,9 @@ export const auth = betterAuth({
     cookiePrefix: 'astro-app', // Prevent localhost cookie collisions
     session: {
       maxAge: 30 * 24 * 60 * 60, // 30 days
+      secure: true,
+      sameSite: 'none',
+      path: '/',
     },
   },
   user: {
