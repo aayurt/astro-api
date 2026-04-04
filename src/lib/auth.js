@@ -35,7 +35,7 @@ export const auth = betterAuth({
     crossDomain: {
       enabled: true,
     },
-    useSecureCookies: true, // For local HTTP development
+    useSecureCookies: process.env.BETTER_AUTH_URL?.startsWith('https'), // For local HTTP development
     cookiePrefix: 'astro-app', // Prevent localhost cookie collisions
     session: {
       maxAge: 30 * 24 * 60 * 60, // 30 days
