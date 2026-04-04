@@ -16,7 +16,7 @@ export const auth = betterAuth({
     },
   },
   baseURL: process.env.BETTER_AUTH_URL || 'http://localhost:3001',
-  basePath: '/astro/api/auth',
+  basePath: '/api/auth',
   trustedOrigins: trustedOrigins,
   emailAndPassword: {
     enabled: true,
