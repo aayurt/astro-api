@@ -1,6 +1,7 @@
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import pkg from '@prisma/client';
+import { trustedOrigins } from '../trustedDomains';
 const { PrismaClient } = pkg;
 
 const prisma = new PrismaClient();
@@ -10,9 +11,12 @@ export const auth = betterAuth({
     provider: 'postgresql',
   }),
   baseURL: process.env.BETTER_AUTH_URL || 'http://localhost:3001',
-  trustedOrigins: [process.env.FRONTEND_URL || 'http://localhost:5173'],
+  trustedOrigins: trustedOrigins,
   emailAndPassword: {
     enabled: true,
+  },
+  rateLimit: {
+    enabled: false,
   },
   secret: process.env.BETTER_AUTH_SECRET,
   socialProviders: {
@@ -25,7 +29,7 @@ export const auth = betterAuth({
     crossDomain: {
       enabled: true,
     },
-    useSecureCookies: process.env.NODE_ENV === 'development' ? false : true, // For local HTTP development
+    useSecureCookies: true, // For local HTTP development
     cookiePrefix: 'astro-app', // Prevent localhost cookie collisions
     session: {
       maxAge: 30 * 24 * 60 * 60, // 30 days
