@@ -30,13 +30,9 @@ app.use(
 
 // better-auth handler
 console.log('Better Auth URL: ' + process.env.BETTER_AUTH_URL);
-const authHandler = toNodeHandler(auth);
-
 app.all('/api/auth/*path', async (req, res, next) => {
   try {
-    console.log('====+++===\n', req.url);
-    console.log('=======', req.path);
-    return auth.handler(req, res);
+    return toNodeHandler(auth)(req, res);
   } catch (err) {
     console.error('Better Auth error:', err);
     next(err);
