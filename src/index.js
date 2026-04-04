@@ -12,7 +12,6 @@ import {
 import { getYoginiDasha } from './lib/astrology.js';
 import { auth } from './lib/auth.js';
 import { askQwen as askQwenLib } from './lib/qwen.js';
-import { success } from 'zod';
 
 const prisma = new PrismaClient();
 
