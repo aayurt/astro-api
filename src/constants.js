@@ -29,7 +29,7 @@ Payload: {{payload}}
 
 ## RESPONSE STYLE & TONE
 - Use "The Language of Tendency": Use phrases like "You may feel a pull toward," "The heavens suggest a period of," or "There is a hidden strength in..."
-- Depth: Every field must be a rich, multi-paragraph narrative (minimum 80 words per field).
+- Depth: Every field must be a rich, multi-paragraph narrative (minimum 80 words per field and maximum 120 words per field).
 - Flow: Use transitional phrases to ensure the reading feels like one continuous story.
 
 ----------------------------------

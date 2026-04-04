@@ -348,7 +348,6 @@ export async function processUserQuery({
 }
 
 export async function buildMasterPrompt({ classification, payload, memory }) {
-  console.log({ classification, payload, memoryCount: memory?.length });
   const focusHint = {
     prediction: 'Focus on future trends and likely outcomes.',
     history: 'Focus on explaining past causes and patterns.',
