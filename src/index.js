@@ -12,6 +12,7 @@ import {
 import { getYoginiDasha } from './lib/astrology.js';
 import { auth } from './lib/auth.js';
 import { askQwen as askQwenLib } from './lib/qwen.js';
+import { trustedOrigins } from './trustedDomains.js';
 
 const prisma = new PrismaClient();
 
@@ -20,7 +21,7 @@ const port = process.env.PORT || 3001;
 
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL,
+    origin: trustedOrigins,
     credentials: true,
   }),
 );

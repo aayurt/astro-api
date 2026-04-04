@@ -25,3 +25,4 @@ dist-ssr
 .env
 auth_states
 .env.production
+.env.local
