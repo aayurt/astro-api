@@ -13,9 +13,9 @@ ssh $SERVER "bash -c '
   cd /var/www/astro-api 
   git pull origin
   echo \"🛑 Removing old processes...\"
-  pm2 delete ecosystem.config.js || true
+  pm2 delete ecosystem.config.cjs || true
   echo \"✅ Starting astro-api...\"
-  pm2 start ecosystem.config.js
+  pm2 start ecosystem.config.cjs
   pm2 save
   echo \"🎉 Deploy complete!\"
 '"
