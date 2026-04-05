@@ -6,6 +6,7 @@ import 'dotenv/config';
 import express from 'express';
 import {
   buildMasterPrompt,
+  buildMasterPromptV2,
   processUserQuery,
   safeParseJSON,
 } from './lib/ai-agent.js';
@@ -179,15 +180,35 @@ const getAstroData = async (
   type = null,
   useCurrentTime = false,
 ) => {
-  // ✅ STEP 1: Check cache (NO expiry, except for transit)
-  if (type && type !== 'transit') {
-    const existing = await prisma.astrologyData.findUnique({
-      where: { userId: user.id },
-    });
+  // ✅ STEP 1: Check cache
+  if (type) {
+    if (type === 'transit') {
+      const timezone = user.timezone || '5.5';
+      const cached = await prisma.transitCache.findUnique({
+        where: { timezone },
+      });
 
-    if (existing && existing[type]) {
-      console.log('✅ Returning cached astrology data');
-      return existing[type];
+      if (cached) {
+        const ONE_DAY = 24 * 60 * 60 * 1000;
+        const isFresh =
+          Date.now() - new Date(cached.updatedAt).getTime() < ONE_DAY;
+        if (isFresh) {
+          console.log(
+            `✅ Returning global cached transit data for TZ ${timezone}`,
+          );
+          return cached.data;
+        }
+        console.log(`↻ Global transit cache expired for TZ ${timezone}`);
+      }
+    } else {
+      const existing = await prisma.astrologyData.findUnique({
+        where: { userId: user.id },
+      });
+
+      if (existing && existing[type]) {
+        console.log(`✅ Returning cached ${type} data for user`);
+        return existing[type];
+      }
     }
   }
 
@@ -350,11 +371,20 @@ const getAstroData = async (
 
   // ✅ STEP 4: Save to DB
   if (type) {
-    await prisma.astrologyData.upsert({
-      where: { userId: user.id },
-      update: { [type]: processedData },
-      create: { userId: user.id, [type]: processedData },
-    });
+    if (type === 'transit') {
+      const timezone = user.timezone || '5.5';
+      await prisma.transitCache.upsert({
+        where: { timezone },
+        update: { data: processedData },
+        create: { timezone, data: processedData },
+      });
+    } else {
+      await prisma.astrologyData.upsert({
+        where: { userId: user.id },
+        update: { [type]: processedData },
+        create: { userId: user.id, [type]: processedData },
+      });
+    }
   }
 
   return processedData;
@@ -1192,13 +1222,50 @@ app.get('/api/astrology/summary', getUser, async (req, res) => {
 
 // Helper to prepare data for AI
 const prepareAstroRawData = async (user) => {
-  const [natal, mahaDashas, transit] = await Promise.all([
-    getAstroData(user, 'planets/extended', 'extended'),
-    getAstroData(user, 'vimsottari/maha-dasas-and-antar-dasas', 'mahaDashas'),
-    getAstroData(user, 'planets/extended', 'transit', true),
+  // 1. Check DB first (Fetch once for efficiency)
+  const [existing, globalTransit] = await Promise.all([
+    prisma.astrologyData.findUnique({
+      where: { userId: user.id },
+    }),
+    prisma.transitCache.findUnique({
+      where: { timezone: user.timezone || '5.5' },
+    }),
   ]);
 
   const now = new Date();
+  const ONE_DAY = 24 * 60 * 60 * 1000;
+  const isGlobalTransitFresh =
+    globalTransit &&
+    now.getTime() - new Date(globalTransit.updatedAt).getTime() < ONE_DAY;
+
+  const [natal, mahaDashas, transit, yoginiDashas] = await Promise.all([
+    existing?.extended
+      ? Promise.resolve(existing.extended)
+      : getAstroData(user, 'planets/extended', 'extended'),
+    existing?.mahaDashas
+      ? Promise.resolve(existing.mahaDashas)
+      : getAstroData(
+          user,
+          'vimsottari/maha-dasas-and-antar-dasas',
+          'mahaDashas',
+        ),
+    isGlobalTransitFresh
+      ? Promise.resolve(globalTransit.data)
+      : getAstroData(user, 'planets/extended', 'transit', true),
+    existing?.yoginiDasha
+      ? Promise.resolve(existing.yoginiDasha)
+      : getYoginiDasha(new Date(user.birthDate)),
+  ]);
+
+  // Save yogini if fetched
+  if (!existing?.yoginiDasha) {
+    await prisma.astrologyData.upsert({
+      where: { userId: user.id },
+      update: { yoginiDasha: yoginiDashas },
+      create: { userId: user.id, yoginiDasha: yoginiDashas },
+    });
+  }
+
   const activeMahaDasha = mahaDashas.find((md) => {
     const start = new Date(md.start_date);
     const end = new Date(md.end_date);
@@ -1214,12 +1281,32 @@ const prepareAstroRawData = async (user) => {
     });
   }
 
+  const activeYogini = yoginiDashas.find((yd) => {
+    const start = new Date(yd.startDate);
+    const end = new Date(yd.endDate);
+    return now >= start && now <= end;
+  });
+
+  let activeYoginiAntar = null;
+  if (activeYogini && activeYogini.antardashas) {
+    activeYoginiAntar = activeYogini.antardashas.find((ad) => {
+      const start = new Date(ad.startDate);
+      const end = new Date(ad.endDate);
+      return now >= start && now <= end;
+    });
+  }
+
   return {
     natal,
     vimsottari: {
       activeMahaDasha,
       activeAntarDasha,
       allDashas: mahaDashas,
+    },
+    yogini: {
+      activeYogini,
+      activeYoginiAntar,
+      allDashas: yoginiDashas,
     },
     transit,
   };
@@ -1419,6 +1506,157 @@ app.post('/api/ai/chat', getUser, async (req, res) => {
       conversationId: conversation.id,
     });
   } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// AI Chat 2 endpoint (single-pass prompt)
+app.post('/api/ai/chat2', getUser, async (req, res) => {
+  const { message, conversationId } = req.body;
+  console.log('--- AI Chat 2 Start ---');
+  console.log('Message:', message);
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+    });
+
+    if (!user) {
+      console.log('❌ User not found');
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (user.coins <= 0) {
+      console.log('❌ Insufficient coins');
+      return res
+        .status(403)
+        .json({ error: 'Insufficient coins. Please claim your daily coin.' });
+    }
+
+    // Deduct 1 coin
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: { coins: user.coins - 1 },
+    });
+    console.log('💰 Coin deducted. Remaining:', user.coins - 1);
+
+    let conversation;
+    if (conversationId) {
+      conversation = await prisma.conversation.findFirst({
+        where: { id: conversationId, userId: user.id },
+      });
+    }
+
+    if (!conversation) {
+      conversation = await prisma.conversation.create({
+        data: {
+          userId: user.id,
+          title: message.substring(0, 50),
+        },
+      });
+      console.log('🆕 New conversation created:', conversation.id);
+    } else {
+      await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { updatedAt: new Date() },
+      });
+      console.log('🔄 Existing conversation updated:', conversation.id);
+    }
+
+    // Store user message
+    const userMessage = await prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        role: 'user',
+        content: message,
+      },
+    });
+
+    // Fetch previous context
+    const previousMessages = await prisma.message.findMany({
+      where: {
+        conversationId: conversation.id,
+        id: { not: userMessage.id },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    });
+
+    const memory = previousMessages.reverse().map((m) => {
+      let content = m.content;
+      if (m.role === 'assistant') {
+        // If it's the assistant, only take the first paragraph or first 200 characters
+        const paragraphs = m.content.split('\n\n');
+        const firstPara = paragraphs[0] || '';
+        content =
+          firstPara.length > 200
+            ? firstPara.substring(0, 200) + '...'
+            : firstPara;
+      }
+      return { role: m.role, content };
+    });
+    console.log(
+      '🧠 Memory retrieved (summarized assistant msgs), items:',
+      memory.length,
+    );
+
+    // Fetch Astrology Data
+    console.log('🔭 Fetching Astrology Data...');
+    const rawData = await prepareAstroRawData(user);
+    console.log('✅ Astrology Data fetched');
+
+    // Build Master Prompt V2 (Single-pass)
+    const masterPrompt = await buildMasterPromptV2({
+      question: message,
+      memory,
+      rawData,
+    });
+
+    let aiResponse = '';
+    try {
+      console.log('👺 Sending Master Prompt V2 to Qwen...');
+      aiResponse = await askQwenLib(masterPrompt);
+
+      const jsonResponse = safeParseJSON(aiResponse, {
+        paragraph_1:
+          "I'm sorry, I'm currently unable to access my celestial insights. Please try again later.",
+        paragraph_2: 'N/A',
+        paragraph_3: 'N/A',
+        paragraph_4: 'N/A',
+      });
+
+      const fullText = [
+        jsonResponse.paragraph_1,
+        jsonResponse.paragraph_2,
+        jsonResponse.paragraph_3,
+        jsonResponse.paragraph_4,
+      ].join('\n\n');
+      aiResponse = fullText;
+      console.log('✅ Qwen response received and parsed');
+    } catch (err) {
+      console.error('🔥 Qwen Error:', err);
+      aiResponse =
+        "I'm sorry, I'm currently unable to access my celestial insights. Please try again later.";
+    }
+
+    // Save response
+    await prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        role: 'assistant',
+        content: aiResponse,
+      },
+    });
+    console.log('💾 Assistant response saved to DB');
+
+    console.log('--- AI Chat 2 Complete ---');
+    res.json({
+      response: aiResponse,
+      coinsLeft: user.coins - 1,
+      conversationId: conversation.id,
+    });
+  } catch (error) {
+    console.error('💥 AI-Chat2 API error:', error);
     res.status(500).json({ error: error.message });
   }
 });
