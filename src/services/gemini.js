@@ -51,46 +51,73 @@ export class GeminiWebService {
 
     this.page = await this.context.newPage();
     console.log('  - Navigating to Gemini App...');
-    await this.page.goto('https://gemini.google.com/app');
-
+    await this.page.goto('https://gemini.google.com/app', {
+      timeout: 60000,
+      waitUntil: 'domcontentloaded',
+    });
+    console.log('  - Navigated to Gemini App successfully.');
     // Check if we are logged in
-    const isLoggedIn = await this.page.isVisible(GEMINI_SELECTORS.prompt_input);
-    if (!isLoggedIn) {
+    try {
+      await this.page.waitForSelector(GEMINI_SELECTORS.prompt_input, {
+        timeout: 10000,
+      });
+      console.log('✅  Gemini session initialized successfully.');
+    } catch (error) {
       console.error(
-        "❌  Not logged in. Please run 'npm run auth' to set up authentication.",
+        "❌  Not logged in or input not found. Please run 'npm run auth' to set up authentication.",
       );
-      throw new Error('Authentication required');
+      // Take a screenshot for debugging if possible
+      try {
+        await this.page.screenshot({ path: 'gemini-init-error.png' });
+        console.log('📸  Screenshot saved to gemini-init-error.png');
+      } catch (e) {}
+      throw new Error('Authentication required or UI changed');
     }
-    console.log('✅  Gemini session initialized successfully.');
   }
 
   /**
    * Send a prompt to Gemini and get the response
    * @param {string} prompt
+   * @param {number} retryCount
    * @returns {Promise<string>}
    */
-  async ask(prompt) {
-    if (!this.page) await this.init();
-
-    console.log(
-      `💬  Sending prompt: "${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
-    );
-
-    await this.page.fill(GEMINI_SELECTORS.prompt_input, prompt);
-    await this.page.keyboard.press('Enter');
-
-    // Wait for the response to start generating
-    // We'll wait for the "Copy" button to appear, which usually indicates it's finished
-    console.log('⏳  Waiting for Gemini to finish generating...');
-
+  async ask(prompt, retryCount = 0) {
     try {
+      if (!this.page) await this.init();
+
+      // Check if we are still on the app page
+      const url = this.page.url();
+      if (!url.includes('gemini.google.com/app')) {
+        console.log('🔄  Not on Gemini app page, re-navigating...');
+        await this.page.goto('https://gemini.google.com/app', {
+          waitUntil: 'networkidle',
+        });
+      }
+
+      console.log(
+        `💬  Sending prompt: "${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
+      );
+
+      // Wait for input to be ready
+      await this.page.waitForSelector(GEMINI_SELECTORS.prompt_input, {
+        timeout: 30000,
+      });
+
+      // Clear existing text if any and type new prompt
+      await this.page.click(GEMINI_SELECTORS.prompt_input);
+      await this.page.fill(GEMINI_SELECTORS.prompt_input, prompt);
+      await this.page.keyboard.press('Enter');
+
+      // Wait for the response to start generating
+      console.log('⏳  Waiting for Gemini to finish generating...');
+
       // Wait for the copy button to appear (indicating response is complete)
       await this.page.waitForSelector(GEMINI_SELECTORS.done_indicator, {
-        timeout: 60000,
+        timeout: 90000, // Increased timeout for long readings
       });
 
       // Small delay to ensure text is rendered
-      await this.page.waitForTimeout(1000);
+      await this.page.waitForTimeout(2000);
 
       // Get all message-content elements
       const responses = await this.page.$$(GEMINI_SELECTORS.response_container);
@@ -107,8 +134,26 @@ export class GeminiWebService {
       console.log(`✅  Response received (${responseText.length} characters)`);
       return responseText;
     } catch (error) {
-      console.error('❌  Error waiting for Gemini response:', error);
-      return 'Error: Could not get response from Gemini web interface.';
+      console.error(
+        `❌  Error in GeminiWebService.ask (Retry: ${retryCount}):`,
+        error.message,
+      );
+
+      if (retryCount < 1) {
+        console.log('🔄  Retrying with re-initialization...');
+        if (this.browser) await this.browser.close();
+        this.page = null;
+        this.browser = null;
+        return this.ask(prompt, retryCount + 1);
+      }
+
+      // Final failure
+      try {
+        if (this.page)
+          await this.page.screenshot({ path: 'gemini-ask-error.png' });
+      } catch (e) {}
+
+      return 'Error: Could not get response from Gemini web interface. Please check server logs.';
     }
   }
 

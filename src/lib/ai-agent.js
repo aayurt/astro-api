@@ -565,10 +565,10 @@ export async function buildMasterPromptV4({ question, memory, rawData }) {
   const getPlanetInfo = (p) => ({
     sign: p?.zodiac_sign_name,
     house: p?.house_number,
-    degree: p?.full_degree ? Number(p.full_degree % 30).toFixed(2) : null,
+    degree: p?.normDegree ? Number(p.normDegree % 30).toFixed(2) : null,
     nakshatra: p?.nakshatra_name,
     nakshatraLord: p?.nakshatra_vimsottari_lord,
-    isRetrograde: p?.is_retrograde === 'true' || p?.is_retrograde === true,
+    isRetrograde: p?.isRetro === 'true' || p?.isRetro === true,
   });
 
   const dashaContext = findDashaForDateRange(rawData.vimsottari, null);
@@ -648,8 +648,36 @@ export async function buildMasterPromptV4({ question, memory, rawData }) {
     },
   };
 
-  const activeYoginiDasha = rawData.yogini?.activeYogini?.dasha;
+  const now = new Date();
   const allYoginiDashas = rawData.yogini?.allDashas || [];
+
+  // Find active Yogini Maha Dasha based on current time
+  const currentMahaDashaObj = allYoginiDashas.find((yd) => {
+    const start = new Date(yd.startDate);
+    const end = new Date(yd.endDate);
+    return now >= start && now <= end;
+  });
+
+  const activeYoginiDasha = currentMahaDashaObj?.name;
+
+  // Find active Yogini Antar Dasha based on current time
+  let activeYoginiAntarObj = null;
+  if (currentMahaDashaObj && currentMahaDashaObj.antardashas) {
+    activeYoginiAntarObj = currentMahaDashaObj.antardashas.find((ad) => {
+      const start = new Date(ad.startDate);
+      const end = new Date(ad.endDate);
+      return now >= start && now <= end;
+    });
+  }
+  const activeYoginiAntarDasha = activeYoginiAntarObj?.name;
+
+  console.log(
+    'Calculated Active Yogini:',
+    activeYoginiDasha,
+    '/',
+    activeYoginiAntarDasha,
+  );
+
   const currentIndex = allYoginiDashas.findIndex(
     (d) => d.dasha === activeYoginiDasha,
   );
@@ -657,7 +685,7 @@ export async function buildMasterPromptV4({ question, memory, rawData }) {
     currentIndex !== -1
       ? allYoginiDashas.slice(0, currentIndex + 6)
       : allYoginiDashas.slice(0, 6);
-  console.log('myTransit', myTransit);
+
   const fullPayload = {
     natal: {
       ascendant: getPlanetInfo(rawData.natal?.Ascendant),
@@ -687,11 +715,11 @@ export async function buildMasterPromptV4({ question, memory, rawData }) {
     dashatimings: dashaContext,
     yoginiDasha: {
       activeYogini: activeYoginiDasha,
-      activeYoginiAntar: rawData.yogini?.activeYoginiAntar?.dasha,
-      activeYoginiStart: rawData.yogini?.activeYogini?.startDate,
-      activeYoginiEnd: rawData.yogini?.activeYogini?.endDate,
-      activeYoginiAntarStart: rawData.yogini?.activeYoginiAntar?.startDate,
-      activeYoginiAntarEnd: rawData.yogini?.activeYoginiAntar?.endDate,
+      activeYoginiAntar: activeYoginiAntarDasha,
+      activeYoginiStart: currentMahaDashaObj?.startDate,
+      activeYoginiEnd: currentMahaDashaObj?.endDate,
+      activeYoginiAntarStart: activeYoginiAntarObj?.startDate,
+      activeYoginiAntarEnd: activeYoginiAntarObj?.endDate,
       allYoginiDashas: filteredYoginiDashas,
     },
   };
