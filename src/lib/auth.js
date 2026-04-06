@@ -10,7 +10,8 @@ const isProd = process.env.BETTER_AUTH_URL?.startsWith('https');
 
 const crossSiteCookieAttributes = {
   sameSite: 'none',
-  secure: false,
+  secure: true,
+  httpOnly: true,
 };
 
 export const auth = betterAuth({
