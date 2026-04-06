@@ -1,13 +1,16 @@
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
+import { bearer } from 'better-auth/plugins';
 import pkg from '@prisma/client';
 import { trustedOrigins } from '../trustedDomains.js';
 const { PrismaClient } = pkg;
 
 const prisma = new PrismaClient();
+const isProd = process.env.BETTER_AUTH_URL?.startsWith('https');
+
 const crossSiteCookieAttributes = {
-  sameSite: 'none',
-  secure: true,
+  sameSite: isProd ? 'none' : 'lax',
+  secure: isProd,
 };
 
 export const auth = betterAuth({
@@ -35,6 +38,7 @@ export const auth = betterAuth({
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     },
   },
+  plugins: [bearer()],
   advanced: {
     trustProxy: true,
     crossDomain: {
@@ -45,8 +49,8 @@ export const auth = betterAuth({
     cookiePrefix: 'astro-app', // Prevent localhost cookie collisions
     session: {
       maxAge: 30 * 24 * 60 * 60, // 30 days
-      secure: true,
-      sameSite: 'none',
+      secure: isProd,
+      sameSite: isProd ? 'none' : 'lax',
     },
   },
   user: {
