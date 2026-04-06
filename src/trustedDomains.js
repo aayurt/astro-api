@@ -5,6 +5,7 @@ const origins = [
   'https://ratosuryaonline.com/astro',
   'http://localhost:3006',
   'http://localhost:3001',
+  'https://astro.ratosuryaonline.com',
 ];
 
 export const trustedOrigins = Array.from(
