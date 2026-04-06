@@ -17,4 +17,10 @@ export const GEMINI_SELECTORS = {
 
   // Wait for this to know it's done
   done_indicator: 'button[aria-label="Copy"]', // Copy button appears when done
+
+  // Google Consent Screen
+  consent_accept_all: 'button[aria-label="Accept all"]',
+  consent_accept_all_alt: 'button:has-text("Accept all")',
+  stay_signed_out: 'button:has-text("Stay signed out")',
+  maybe_later: 'button:has-text("Maybe later")',
 };

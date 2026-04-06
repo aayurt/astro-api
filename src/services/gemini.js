@@ -56,6 +56,10 @@ export class GeminiWebService {
       waitUntil: 'domcontentloaded',
     });
     console.log('  - Navigated to Gemini App successfully.');
+
+    // Handle Google consent screen if it appears
+    await this._handleConsent();
+
     // Check if we are logged in
     try {
       await this.page.waitForSelector(GEMINI_SELECTORS.prompt_input, {
@@ -76,6 +80,73 @@ export class GeminiWebService {
   }
 
   /**
+   * Handle the "Before you continue to Google" consent screen if it appears
+   */
+  async _handleConsent() {
+    try {
+      // Small wait to allow consent modal to appear
+      await this.page.waitForTimeout(2000);
+
+      // 1. Look for the "Accept all" button
+      const consentButton = await this.page.$(
+        GEMINI_SELECTORS.consent_accept_all,
+      );
+      const consentButtonAlt = await this.page.$(
+        GEMINI_SELECTORS.consent_accept_all_alt,
+      );
+
+      if (consentButton || consentButtonAlt) {
+        console.log(
+          '🤝  Google consent screen detected. Clicking "Accept all"...',
+        );
+        const button = consentButton || consentButtonAlt;
+        await button.click();
+        // Wait a bit for the redirect to finish
+        await this.page.waitForTimeout(2000);
+        console.log('✅  Consent screen handled.');
+      }
+
+      // 2. Handle "Stay signed out" or "Maybe later" popups if they appear
+      const staySignedOut = await this.page.$(GEMINI_SELECTORS.stay_signed_out);
+      const maybeLater = await this.page.$(GEMINI_SELECTORS.maybe_later);
+
+      if (staySignedOut) {
+        console.log('🤝  "Stay signed out" popup detected. Clicking...');
+        await staySignedOut.click();
+        await this.page.waitForTimeout(1000);
+      } else if (maybeLater) {
+        console.log('🤝  "Maybe later" popup detected. Clicking...');
+        await maybeLater.click();
+        await this.page.waitForTimeout(1000);
+      }
+
+      // 3. Double check if the page content contains "Before you continue to Google"
+      const content = await this.page.content();
+      if (content.includes('Before you continue to Google')) {
+        console.log(
+          '🤝  Consent screen text detected but button not found by selector. Trying generic approach...',
+        );
+        // Try clicking any button that contains "Accept all"
+        const buttons = await this.page.$$('button');
+        for (const btn of buttons) {
+          const text = await btn.innerText();
+          if (
+            text.toLowerCase().includes('accept all') ||
+            text.toLowerCase().includes('agree')
+          ) {
+            await btn.click();
+            await this.page.waitForTimeout(2000);
+            console.log(`✅  Clicked button with text: "${text}"`);
+            return;
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('⚠️  Error handling consent screen:', error.message);
+    }
+  }
+
+  /**
    * Send a prompt to Gemini and get the response
    * @param {string} prompt
    * @param {number} retryCount
@@ -90,8 +161,9 @@ export class GeminiWebService {
       if (!url.includes('gemini.google.com/app')) {
         console.log('🔄  Not on Gemini app page, re-navigating...');
         await this.page.goto('https://gemini.google.com/app', {
-          waitUntil: 'networkidle',
+          waitUntil: 'domcontentloaded',
         });
+        await this._handleConsent();
       }
 
       console.log(
