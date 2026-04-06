@@ -7,15 +7,18 @@ import express from 'express';
 import {
   buildMasterPrompt,
   buildMasterPromptV2,
+  buildMasterPromptV4,
   processUserQuery,
   safeParseJSON,
 } from './lib/ai-agent.js';
 import { getYoginiDasha } from './lib/astrology.js';
 import { auth } from './lib/auth.js';
 import { askQwen as askQwenLib } from './lib/qwen.js';
+import { GeminiWebService } from './services/gemini.js';
 import { trustedOrigins } from './trustedDomains.js';
 
 const prisma = new PrismaClient();
+const geminiService = new GeminiWebService();
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -1616,8 +1619,8 @@ app.post('/api/ai/chat2', getUser, async (req, res) => {
     const rawData = await prepareAstroRawData(user);
     console.log('✅ Astrology Data fetched');
 
-    // Build Master Prompt V2 (Single-pass)
-    const masterPrompt = await buildMasterPromptV2({
+    // Build Master Prompt V4 (Single-pass, Enriched)
+    const masterPrompt = await buildMasterPromptV4({
       question: message,
       memory,
       rawData,
@@ -1625,8 +1628,8 @@ app.post('/api/ai/chat2', getUser, async (req, res) => {
 
     let aiResponse = '';
     try {
-      console.log('👺 Sending Master Prompt V2 to Qwen...');
-      aiResponse = await askQwenLib(masterPrompt);
+      console.log('👺 Sending Master Prompt V4 to Gemini...');
+      aiResponse = await geminiService.ask(masterPrompt);
 
       const jsonResponse = safeParseJSON(aiResponse, {
         paragraph_1:
@@ -1643,9 +1646,9 @@ app.post('/api/ai/chat2', getUser, async (req, res) => {
         jsonResponse.paragraph_4,
       ].join('\n\n');
       aiResponse = fullText;
-      console.log('✅ Qwen response received and parsed');
+      console.log('✅ Gemini response received and parsed');
     } catch (err) {
-      console.error('🔥 Qwen Error:', err);
+      console.error('🔥 Gemini Error:', err);
       aiResponse =
         "I'm sorry, I'm currently unable to access my celestial insights. Please try again later.";
     }

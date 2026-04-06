@@ -3,6 +3,7 @@
 
 import {
   MASTER_PROMPT_TEMPLATE,
+  MASTER_PROMPT_TEMPLATE_GEMINI,
   MASTER_PROMPT_TEMPLATE_UPDATED,
 } from '../constants.js';
 
@@ -536,15 +537,13 @@ export async function buildMasterPromptV2({ question, memory, rawData }) {
       activeYoginiEnd: rawData.yogini?.activeYogini?.endDate,
       activeYoginiAntarStart: rawData.yogini?.activeYoginiAntar?.startDate,
       activeYoginiAntarEnd: rawData.yogini?.activeYoginiAntar?.endDate,
-      allDashas: filteredYoginiDashas,
     },
   };
-
   console.log('📦 Full payload for V2 constructed');
 
-  let prompt = MASTER_PROMPT_TEMPLATE_UPDATED.replace(
+  let prompt = MASTER_PROMPT_TEMPLATE_GEMINI.replace(
     '{{classification}}',
-    classifierInstructions,
+    JSON.stringify(classifierInstructions, null, 2),
   ).replace('{{payload}}', JSON.stringify(fullPayload, null, 2));
 
   if (memory && memory.length > 0) {
@@ -556,5 +555,177 @@ export async function buildMasterPromptV2({ question, memory, rawData }) {
   prompt += `\n\nQuestion: "${question}"`;
 
   console.log('✨ Master Prompt V2 build complete');
+  return prompt;
+}
+
+export async function buildMasterPromptV4({ question, memory, rawData }) {
+  console.log('🚀 Building Master Prompt V4 (Enriched Data)...');
+
+  // Helper for detailed planet info
+  const getPlanetInfo = (p) => ({
+    sign: p?.zodiac_sign_name,
+    house: p?.house_number,
+    degree: p?.full_degree ? Number(p.full_degree % 30).toFixed(2) : null,
+    nakshatra: p?.nakshatra_name,
+    nakshatraLord: p?.nakshatra_vimsottari_lord,
+    isRetrograde: p?.is_retrograde === 'true' || p?.is_retrograde === true,
+  });
+
+  const dashaContext = findDashaForDateRange(rawData.vimsottari, null);
+  const ascSign = rawData.natal?.Ascendant?.zodiac_sign_name;
+
+  // Pre-calculate planetary aspects or interactions for V4
+  const myTransit = {
+    ascendant: {
+      ...getPlanetInfo(rawData.natal?.Ascendant),
+      house: getHouseFromAscendant(
+        rawData.natal?.Ascendant?.zodiac_sign_name,
+        ascSign,
+      ),
+    },
+    sun: {
+      ...getPlanetInfo(rawData.transit?.Sun),
+      house: getHouseFromAscendant(
+        rawData.transit?.Sun?.zodiac_sign_name,
+        ascSign,
+      ),
+    },
+    moon: {
+      ...getPlanetInfo(rawData.transit?.Moon),
+      house: getHouseFromAscendant(
+        rawData.transit?.Moon?.zodiac_sign_name,
+        ascSign,
+      ),
+    },
+    mars: {
+      ...getPlanetInfo(rawData.transit?.Mars),
+      house: getHouseFromAscendant(
+        rawData.transit?.Mars?.zodiac_sign_name,
+        ascSign,
+      ),
+    },
+    mercury: {
+      ...getPlanetInfo(rawData.transit?.Mercury),
+      house: getHouseFromAscendant(
+        rawData.transit?.Mercury?.zodiac_sign_name,
+        ascSign,
+      ),
+    },
+    jupiter: {
+      ...getPlanetInfo(rawData.transit?.Jupiter),
+      house: getHouseFromAscendant(
+        rawData.transit?.Jupiter?.zodiac_sign_name,
+        ascSign,
+      ),
+    },
+    venus: {
+      ...getPlanetInfo(rawData.transit?.Venus),
+      house: getHouseFromAscendant(
+        rawData.transit?.Venus?.zodiac_sign_name,
+        ascSign,
+      ),
+    },
+    saturn: {
+      ...getPlanetInfo(rawData.transit?.Saturn),
+      house: getHouseFromAscendant(
+        rawData.transit?.Saturn?.zodiac_sign_name,
+        ascSign,
+      ),
+    },
+    rahu: {
+      ...getPlanetInfo(rawData.transit?.Rahu),
+      house: getHouseFromAscendant(
+        rawData.transit?.Rahu?.zodiac_sign_name,
+        ascSign,
+      ),
+    },
+    ketu: {
+      ...getPlanetInfo(rawData.transit?.Ketu),
+      house: getHouseFromAscendant(
+        rawData.transit?.Ketu?.zodiac_sign_name,
+        ascSign,
+      ),
+    },
+  };
+
+  const activeYoginiDasha = rawData.yogini?.activeYogini?.dasha;
+  const allYoginiDashas = rawData.yogini?.allDashas || [];
+  const currentIndex = allYoginiDashas.findIndex(
+    (d) => d.dasha === activeYoginiDasha,
+  );
+  const filteredYoginiDashas =
+    currentIndex !== -1
+      ? allYoginiDashas.slice(0, currentIndex + 6)
+      : allYoginiDashas.slice(0, 6);
+  console.log('myTransit', myTransit);
+  const fullPayload = {
+    natal: {
+      ascendant: getPlanetInfo(rawData.natal?.Ascendant),
+      sun: getPlanetInfo(rawData.natal?.Sun),
+      moon: getPlanetInfo(rawData.natal?.Moon),
+      mars: getPlanetInfo(rawData.natal?.Mars),
+      mercury: getPlanetInfo(rawData.natal?.Mercury),
+      jupiter: getPlanetInfo(rawData.natal?.Jupiter),
+      venus: getPlanetInfo(rawData.natal?.Venus),
+      saturn: getPlanetInfo(rawData.natal?.Saturn),
+      rahu: getPlanetInfo(rawData.natal?.Rahu),
+      ketu: getPlanetInfo(rawData.natal?.Ketu),
+    },
+    transit: {
+      sun: getPlanetInfo(rawData.transit?.Sun),
+      moon: getPlanetInfo(rawData.transit?.Moon),
+      mars: getPlanetInfo(rawData.transit?.Mars),
+      mercury: getPlanetInfo(rawData.transit?.Mercury),
+      jupiter: getPlanetInfo(rawData.transit?.Jupiter),
+      venus: getPlanetInfo(rawData.transit?.Venus),
+      saturn: getPlanetInfo(rawData.transit?.Saturn),
+      rahu: getPlanetInfo(rawData.transit?.Rahu),
+      ketu: getPlanetInfo(rawData.transit?.Ketu),
+      ascendant: getPlanetInfo(rawData.transit?.Ascendant),
+    },
+    myTransit,
+    dashatimings: dashaContext,
+    yoginiDasha: {
+      activeYogini: activeYoginiDasha,
+      activeYoginiAntar: rawData.yogini?.activeYoginiAntar?.dasha,
+      activeYoginiStart: rawData.yogini?.activeYogini?.startDate,
+      activeYoginiEnd: rawData.yogini?.activeYogini?.endDate,
+      activeYoginiAntarStart: rawData.yogini?.activeYoginiAntar?.startDate,
+      activeYoginiAntarEnd: rawData.yogini?.activeYoginiAntar?.endDate,
+      allYoginiDashas: filteredYoginiDashas,
+    },
+  };
+
+  console.log('📦 Full payload for V4 constructed');
+
+  const detailedKeywords = [
+    'detail',
+    'explain more',
+    'elaborate',
+    'comprehensive',
+    'deep dive',
+    'thorough',
+  ];
+  const isDetailed = detailedKeywords.some((kw) =>
+    question.toLowerCase().includes(kw),
+  );
+  const lengthHint = isDetailed
+    ? 'This is a detailed request. Provide approximately 120 words per paragraph, with a total word count around 500 words.'
+    : 'This is a standard request. Provide a concise but soulful reading with approximately 40 words per paragraph.';
+
+  let prompt = MASTER_PROMPT_TEMPLATE_GEMINI.replace(
+    '{{payload}}',
+    JSON.stringify(fullPayload, null, 2),
+  ).replace('{{lengthHint}}', lengthHint);
+
+  if (memory && memory.length > 0) {
+    prompt += `\n\nPrevious Context:\n${JSON.stringify(memory, null, 2)}`;
+  } else {
+    prompt += `\n\nPrevious Context:\nNone`;
+  }
+
+  prompt += `\n\nQuestion: "${question}"`;
+
+  console.log('✨ Master Prompt V4 build complete');
   return prompt;
 }
