@@ -1225,13 +1225,20 @@ app.get('/api/astrology/summary', getUser, async (req, res) => {
 
 // Helper to prepare data for AI
 const prepareAstroRawData = async (user) => {
+  // Fetch full user to get latest updatedAt if not provided
+  const currentUser = await prisma.user.findUnique({
+    where: { id: user.id },
+  });
+
+  if (!currentUser) throw new Error('User not found');
+
   // 1. Check DB first (Fetch once for efficiency)
   const [existing, globalTransit] = await Promise.all([
     prisma.astrologyData.findUnique({
-      where: { userId: user.id },
+      where: { userId: currentUser.id },
     }),
     prisma.transitCache.findUnique({
-      where: { timezone: user.timezone || '5.5' },
+      where: { timezone: currentUser.timezone || '5.5' },
     }),
   ]);
 
@@ -1239,13 +1246,18 @@ const prepareAstroRawData = async (user) => {
   const ONE_DAY = 24 * 60 * 60 * 1000;
 
   // ⚠️ STALE CACHE CHECK: If user profile updated AFTER astrology data, invalidate cache
+  // This ensures if user changes birth location/time, we fetch NEW data
   const isCacheStale =
-    existing &&
-    user.updatedAt &&
-    new Date(user.updatedAt).getTime() > new Date(existing.updatedAt).getTime();
+    !existing ||
+    (currentUser.updatedAt &&
+      existing.updatedAt &&
+      new Date(currentUser.updatedAt).getTime() >
+        new Date(existing.updatedAt).getTime());
 
-  if (isCacheStale) {
-    console.log('🔄 User profile updated, invalidating astrology data cache');
+  if (isCacheStale && existing) {
+    console.log(
+      `🔄 User ${currentUser.id} profile updated (${currentUser.updatedAt}), invalidating astrology data cache (last cached: ${existing.updatedAt})`,
+    );
   }
 
   const isGlobalTransitFresh =
@@ -1255,28 +1267,28 @@ const prepareAstroRawData = async (user) => {
   const [natal, mahaDashas, transit, yoginiDashas] = await Promise.all([
     !isCacheStale && existing?.extended
       ? Promise.resolve(existing.extended)
-      : getAstroData(user, 'planets/extended', 'extended'),
+      : getAstroData(currentUser, 'planets/extended', 'extended'),
     !isCacheStale && existing?.mahaDashas
       ? Promise.resolve(existing.mahaDashas)
       : getAstroData(
-          user,
+          currentUser,
           'vimsottari/maha-dasas-and-antar-dasas',
           'mahaDashas',
         ),
     isGlobalTransitFresh
       ? Promise.resolve(globalTransit.data)
-      : getAstroData(user, 'planets/extended', 'transit', true),
+      : getAstroData(currentUser, 'planets/extended', 'transit', true),
     !isCacheStale && existing?.yoginiDasha
       ? Promise.resolve(existing.yoginiDasha)
-      : getYoginiDasha(new Date(user.birthDate)),
+      : getYoginiDasha(new Date(currentUser.birthDate)),
   ]);
 
   // Save yogini if fetched (or if cache was stale)
   if (isCacheStale || !existing?.yoginiDasha) {
     await prisma.astrologyData.upsert({
-      where: { userId: user.id },
+      where: { userId: currentUser.id },
       update: { yoginiDasha: yoginiDashas },
-      create: { userId: user.id, yoginiDasha: yoginiDashas },
+      create: { userId: currentUser.id, yoginiDasha: yoginiDashas },
     });
   }
 
