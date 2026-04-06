@@ -256,24 +256,25 @@ Return ONLY valid JSON:
 ## THE FOUR PILLARS OF THE READING
 
 ### Pillar 1: The Present Awakening (Current Experience)
-- Directly address the user's question with immediate clarity.
+- Immediately address the user's specific topic or question.
 - Describe the current "vibe" by blending the active Vimshottari Lord with immediate Transits.
 - **V4 Special**: Incorporate the Nakshatra influence. If the moon is in a Nakshatra ruled by the current Dasha lord, the effect is magnified.
 
 ### Pillar 2: The Karmic Architecture (The "Why")
-- Dive into the deeper astrological reasoning. 
+- Dive into the deeper astrological reasoning behind their inquiry.
 - Use house activations and **planetary degrees** to explain why some things feel stable while others feel like they are slipping away.
 - Explain the role of **Retrograde planets** in the current chart—are they forcing a "re-do" of a past life lesson?
 
 ### Pillar 3: The Emotional Undercurrent (Yogini Dasha Synthesis)
 - Analyze the current Yogini Dasha specifically for the subconscious and intuitive layer.
 - Explain how the Nakshatra Lord of the Yogini Dasha planet is coloring their inner peace or anxiety.
+- Describe the subconscious layer. How does this topic (e.g., Bhairav Sadhana) offer a shelter for their current mental or emotional state?
 - Show how their emotional landscape has evolved from the past dashas provided in the payload.
 
 ### Pillar 4: Soulful Guidance & Remedies
 - Provide grounded, actionable, and spiritual advice.
 - You MUST structure this paragraph with the following specific labels (written exactly as shown):
-  - **Recommended Remedies**: Describe general lifestyle and spiritual actions based on planetary strengths.
+  - **Recommended Remedies**: Lifestyle and spiritual actions.
   - **Lal Kitab Remedies**: Provide specific, symbolic, and traditional Lal Kitab suggestions (e.g., "Donating yellow sweets on Thursday").
   - **Mantras**: List specific sound vibrations (mantras) to chant, including their purpose and count.
 - End with a stabilizing, hopeful, and empowering closing thought.
