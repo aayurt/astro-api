@@ -9,8 +9,8 @@ const prisma = new PrismaClient();
 const isProd = process.env.BETTER_AUTH_URL?.startsWith('https');
 
 const crossSiteCookieAttributes = {
-  sameSite: isProd ? 'none' : 'lax',
-  secure: isProd,
+  sameSite: 'none',
+  secure: false,
 };
 
 export const auth = betterAuth({
