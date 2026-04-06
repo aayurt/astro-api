@@ -9,9 +9,8 @@ const prisma = new PrismaClient();
 const isProd = process.env.BETTER_AUTH_URL?.startsWith('https');
 
 const crossSiteCookieAttributes = {
-  sameSite: 'none',
-  secure: true,
-  httpOnly: true,
+  sameSite: isProd ? 'none' : 'lax',
+  secure: isProd,
 };
 
 export const auth = betterAuth({
@@ -52,6 +51,9 @@ export const auth = betterAuth({
       maxAge: 30 * 24 * 60 * 60, // 30 days
       secure: isProd,
       sameSite: isProd ? 'none' : 'lax',
+    },
+    crossSubDomainCookies: {
+      enabled: true,
     },
   },
   user: {
