@@ -48,6 +48,7 @@ const getUser = async (req, res, next) => {
     });
 
     if (!session || !session.user) {
+      console.log('❌ Session not found or user not found in session');
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
@@ -1646,6 +1647,7 @@ app.post('/api/ai/chat2', getUser, async (req, res) => {
     // Fetch Astrology Data
     console.log('🔭 Fetching Astrology Data...');
     const rawData = await prepareAstroRawData(user);
+    delete rawData.transit;
     console.log('✅ Astrology Data fetched');
 
     // Build Master Prompt V4 (Single-pass, Enriched)

@@ -32,6 +32,9 @@ export const auth = betterAuth({
     enabled: false,
   },
   secret: process.env.BETTER_AUTH_SECRET,
+  session: {
+    strategy: 'jwt',
+  },
   socialProviders: {
     google: {
       clientId: process.env.GOOGLE_CLIENT_ID,
