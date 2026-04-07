@@ -26,3 +26,4 @@ dist-ssr
 auth_states
 .env.production
 .env.local
+gemini-ask-error.png

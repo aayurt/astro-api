@@ -1,13 +1,13 @@
 import pkg from '@prisma/client';
-const { PrismaClient } = pkg;
 import { toNodeHandler } from 'better-auth/node';
 import cors from 'cors';
 import 'dotenv/config';
 import express from 'express';
+import { MASTER_PROMPT_TEMPLATE_PERSONALITY_GEMINI } from './constants.js';
 import {
   buildMasterPrompt,
-  buildMasterPromptV2,
   buildMasterPromptV4,
+  buildMasterPromptV5,
   processUserQuery,
   safeParseJSON,
 } from './lib/ai-agent.js';
@@ -16,6 +16,7 @@ import { auth } from './lib/auth.js';
 import { askQwen as askQwenLib } from './lib/qwen.js';
 import { GeminiWebService } from './services/gemini.js';
 import { trustedOrigins } from './trustedDomains.js';
+const { PrismaClient } = pkg;
 
 const prisma = new PrismaClient();
 const geminiService = new GeminiWebService();
@@ -41,14 +42,30 @@ app.use(express.json());
 
 // Middleware to get user from auth session
 const getUser = async (req, res, next) => {
-  const session = await auth.api.getSession({
-    headers: new Headers(req.headers),
-  });
-  if (!session) {
-    return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const session = await auth.api.getSession({
+      headers: new Headers(req.headers),
+    });
+
+    if (!session || !session.user) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    // Always fetch full user from Prisma to ensure all fields (birthDate, coins, etc.) are available
+    const fullUser = await prisma.user.findUnique({
+      where: { id: session.user.id },
+    });
+
+    if (!fullUser) {
+      return res.status(401).json({ error: 'User not found in database' });
+    }
+
+    req.user = fullUser;
+    next();
+  } catch (error) {
+    console.error('getUser middleware error:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
-  req.user = session.user;
-  next();
 };
 
 app.get('/api', async (req, res) => {
@@ -1683,6 +1700,181 @@ app.post('/api/ai/chat2', getUser, async (req, res) => {
     });
   } catch (error) {
     console.error('💥 AI-Chat2 API error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// AI Chat 5 endpoint (HTML Output)
+app.post('/api/ai/chat5', getUser, async (req, res) => {
+  const { message, conversationId } = req.body;
+  console.log('--- AI Chat 5 Start ---');
+  console.log('Message:', message);
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+    });
+
+    if (!user) {
+      console.log('❌ User not found');
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (user.coins <= 0) {
+      console.log('❌ Insufficient coins');
+      return res
+        .status(403)
+        .json({ error: 'Insufficient coins. Please claim your daily coin.' });
+    }
+
+    // Deduct 1 coin
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: { coins: user.coins - 1 },
+    });
+    console.log('💰 Coin deducted. Remaining:', user.coins - 1);
+
+    let conversation;
+    if (conversationId) {
+      conversation = await prisma.conversation.findFirst({
+        where: { id: conversationId, userId: user.id },
+      });
+    }
+
+    if (!conversation) {
+      conversation = await prisma.conversation.create({
+        data: {
+          userId: user.id,
+          title: message.substring(0, 50),
+        },
+      });
+      console.log('🆕 New conversation created:', conversation.id);
+    } else {
+      await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { updatedAt: new Date() },
+      });
+      console.log('🔄 Existing conversation updated:', conversation.id);
+    }
+
+    // Store user message
+    const userMessage = await prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        role: 'user',
+        content: message,
+      },
+    });
+
+    // Fetch previous context
+    const previousMessages = await prisma.message.findMany({
+      where: {
+        conversationId: conversation.id,
+        id: { not: userMessage.id },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+    });
+
+    const memory = previousMessages.reverse().map((m) => {
+      let content = m.content;
+      if (m.role === 'assistant') {
+        // Simple summary for memory efficiency
+        content =
+          m.content.length > 200
+            ? m.content.substring(0, 200) + '...'
+            : m.content;
+      }
+      return { role: m.role, content };
+    });
+
+    // Fetch Astrology Data
+    console.log('🔭 Fetching Astrology Data...');
+    const rawData = await prepareAstroRawData(user);
+    console.log('✅ Astrology Data fetched');
+
+    // Build Master Prompt V5
+    const masterPrompt = await buildMasterPromptV5({
+      question: message,
+      memory,
+      rawData,
+    });
+
+    let aiResponse = '';
+    try {
+      console.log('👺 Sending Master Prompt V5 to Gemini...');
+      aiResponse = await geminiService.ask(masterPrompt);
+
+      // Clean up potential markdown backticks
+      aiResponse = aiResponse.replace(/```html|```/g, '').trim();
+
+      console.log('✅ Gemini response received (HTML)');
+    } catch (err) {
+      console.error('🔥 Gemini Error:', err);
+      aiResponse =
+        "<div class='error'>I'm sorry, I'm currently unable to access my celestial insights. Please try again later.</div>";
+    }
+
+    // Save response
+    await prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        role: 'assistant',
+        content: aiResponse,
+      },
+    });
+    console.log('💾 Assistant response saved to DB');
+
+    console.log('--- AI Chat 5 Complete ---');
+    res.json({
+      response: aiResponse,
+      coinsLeft: user.coins - 1,
+      conversationId: conversation.id,
+    });
+  } catch (error) {
+    console.error('💥 AI-Chat5 API error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/ai/persona', getUser, async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (user.aiPersona) {
+      return res.json({ persona: user.aiPersona });
+    }
+
+    // Generate new persona
+    if (!user.birthDate || user.latitude === undefined) {
+      return res.status(400).json({ error: 'User birth details missing' });
+    }
+
+    console.log('🔭 Generating Persona Analysis for:', user.id);
+    const rawData = await prepareAstroRawData(user);
+
+    // Only use natal chart data as requested
+    const natalData = rawData.natal;
+    const personaPrompt = MASTER_PROMPT_TEMPLATE_PERSONALITY_GEMINI.replace(
+      '{{payload}}',
+      JSON.stringify(natalData, null, 2),
+    );
+
+    const aiResponse = await geminiService.ask(personaPrompt);
+
+    // The template asks for raw HTML, so we store it directly.
+    // We remove any potential markdown backticks that Gemini might add despite instructions.
+    const cleanHtml = aiResponse.replace(/```html|```/g, '').trim();
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { aiPersona: cleanHtml },
+    });
+
+    console.log('✅ Persona Analysis generated and stored');
+    res.json({ persona: cleanHtml });
+  } catch (error) {
+    console.error('💥 AI-Persona API error:', error);
     res.status(500).json({ error: error.message });
   }
 });
