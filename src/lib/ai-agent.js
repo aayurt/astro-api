@@ -724,6 +724,7 @@ export async function buildMasterPromptV4({ question, memory, rawData }) {
       activeYoginiAntarEnd: activeYoginiAntarObj?.endDate,
       allYoginiDashas: filteredYoginiDashas,
     },
+    aiPersona: rawData.aiPersona,
   };
 
   console.log('📦 Full payload for V4 constructed');
@@ -940,6 +941,7 @@ export async function buildMasterPromptV5({ question, memory, rawData }) {
       activeYoginiAntarEnd: activeYoginiAntarObj?.endDate,
       allYoginiDashas: filteredYoginiDashas,
     },
+    aiPersona: rawData.aiPersona,
   };
   // Replace placeholders in MASTER_PROMPT_TEMPLATE_HTML
   let prompt = MASTER_PROMPT_TEMPLATE_SOULFUL_HTML.replace(

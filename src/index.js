@@ -1353,6 +1353,7 @@ const prepareAstroRawData = async (user) => {
       allDashas: yoginiDashas,
     },
     transit,
+    aiPersona: existing?.aiPersona,
   };
 };
 
@@ -1843,8 +1844,14 @@ app.get('/api/ai/persona', getUser, async (req, res) => {
   try {
     const user = req.user;
 
-    if (user.aiPersona) {
-      return res.json({ persona: user.aiPersona });
+    // Check if persona already exists in AstrologyData
+    const existingData = await prisma.astrologyData.findUnique({
+      where: { userId: user.id },
+      select: { aiPersona: true },
+    });
+
+    if (existingData?.aiPersona) {
+      return res.json({ persona: existingData.aiPersona });
     }
 
     // Generate new persona
@@ -1868,9 +1875,10 @@ app.get('/api/ai/persona', getUser, async (req, res) => {
     // We remove any potential markdown backticks that Gemini might add despite instructions.
     const cleanHtml = aiResponse.replace(/```html|```/g, '').trim();
 
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { aiPersona: cleanHtml },
+    await prisma.astrologyData.upsert({
+      where: { userId: user.id },
+      update: { aiPersona: cleanHtml },
+      create: { userId: user.id, aiPersona: cleanHtml },
     });
 
     console.log('✅ Persona Analysis generated and stored');

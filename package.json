@@ -8,7 +8,8 @@
     "start": "node src/index.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "db:migrate": "prisma migrate dev",
-    "db:reset": "prisma migrate reset"
+    "db:reset": "prisma migrate reset",
+    "db:generate": "prisma generate"
   },
   "keywords": [],
   "author": "",

@@ -14,6 +14,7 @@ ssh $SERVER "bash -c '
   echo \"Git pull\"
   cd /var/www/astro-api 
   git pull origin
+  pnpm run db:generate
   echo \"🛑 Removing old processes...\"
   pm2 restart ecosystem.config.cjs
   pm2 save
