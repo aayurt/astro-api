@@ -34,6 +34,10 @@ export const auth = betterAuth({
   secret: process.env.BETTER_AUTH_SECRET,
   session: {
     strategy: 'jwt',
+    cookieCache: {
+      type: 'compact',
+      maxAge: 5 * 60, // 5 minutes
+    },
   },
   socialProviders: {
     google: {
