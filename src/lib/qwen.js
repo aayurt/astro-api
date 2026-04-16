@@ -103,11 +103,11 @@ async function extractLatestResponse(page) {
   }, SELECTORS);
 }
 
-export async function askQwen(prompt) {
+export async function askQwen(prompt, conversationId = null) {
   let browser;
   try {
     browser = await chromium.launch({
-      headless: true, // Headless for backend
+      headless: true,
       args: ['--disable-blink-features=AutomationControlled', '--no-sandbox', '--disable-setuid-sandbox'],
     });
 
@@ -117,11 +117,33 @@ export async function askQwen(prompt) {
     });
 
     const page = await context.newPage();
-    await navigateToChat(page);
+
+    if (conversationId) {
+      console.log(`🔗 Opening existing Qwen conversation: ${conversationId}`);
+      await page.goto(`https://chat.qwen.ai/c/${conversationId}`, {
+        waitUntil: 'domcontentloaded',
+        timeout: 60000,
+      });
+      await handleModals(page);
+    } else {
+      await navigateToChat(page);
+    }
+
     await sendPrompt(page, prompt);
     await waitForResponse(page);
+    
+    let returnedConversationId = conversationId;
+    if (!returnedConversationId) {
+      const url = page.url();
+      const match = url.match(/\/c\/([a-f0-9-]+)/);
+      if (match) {
+        returnedConversationId = match[1];
+        console.log(`🆕 New Qwen conversation created: ${returnedConversationId}`);
+      }
+    }
+
     const result = await extractLatestResponse(page);
-    return result;
+    return { response: result, conversationId: returnedConversationId };
   } catch (error) {
     console.error('Qwen Error:', error);
     throw error;
