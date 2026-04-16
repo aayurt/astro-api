@@ -259,15 +259,15 @@ export function buildPredictionPayload(data, dashaContext, classification) {
     ...(isFuture
       ? {}
       : {
-          transit: {
-            sun: getPlanetInfo(data.transit?.Sun),
-            moon: getPlanetInfo(data.transit?.Moon),
-            saturn: getPlanetInfo(data.transit?.Saturn),
-            jupiter: getPlanetInfo(data.transit?.Jupiter),
-            rahu: getPlanetInfo(data.transit?.Rahu),
-            ketu: getPlanetInfo(data.transit?.Ketu),
-          },
-        }),
+        transit: {
+          sun: getPlanetInfo(data.transit?.Sun),
+          moon: getPlanetInfo(data.transit?.Moon),
+          saturn: getPlanetInfo(data.transit?.Saturn),
+          jupiter: getPlanetInfo(data.transit?.Jupiter),
+          rahu: getPlanetInfo(data.transit?.Rahu),
+          ketu: getPlanetInfo(data.transit?.Ketu),
+        },
+      }),
   };
 }
 
@@ -777,78 +777,78 @@ export async function buildMasterPromptV5({ question, memory, rawData }) {
   const dashaContext = findDashaForDateRange(rawData.vimsottari, null);
   const ascSign = rawData.natal?.Ascendant?.zodiac_sign_name;
 
-  const myTransit = {
-    ascendant: {
-      ...getPlanetInfo(rawData.natal?.Ascendant),
-      house: getHouseFromAscendant(
-        rawData.natal?.Ascendant?.zodiac_sign_name,
-        ascSign,
-      ),
-    },
-    sun: {
-      ...getPlanetInfo(rawData.transit?.Sun),
-      house: getHouseFromAscendant(
-        rawData.transit?.Sun?.zodiac_sign_name,
-        ascSign,
-      ),
-    },
-    moon: {
-      ...getPlanetInfo(rawData.transit?.Moon),
-      house: getHouseFromAscendant(
-        rawData.transit?.Moon?.zodiac_sign_name,
-        ascSign,
-      ),
-    },
-    mars: {
-      ...getPlanetInfo(rawData.transit?.Mars),
-      house: getHouseFromAscendant(
-        rawData.transit?.Mars?.zodiac_sign_name,
-        ascSign,
-      ),
-    },
-    mercury: {
-      ...getPlanetInfo(rawData.transit?.Mercury),
-      house: getHouseFromAscendant(
-        rawData.transit?.Mercury?.zodiac_sign_name,
-        ascSign,
-      ),
-    },
-    jupiter: {
-      ...getPlanetInfo(rawData.transit?.Jupiter),
-      house: getHouseFromAscendant(
-        rawData.transit?.Jupiter?.zodiac_sign_name,
-        ascSign,
-      ),
-    },
-    venus: {
-      ...getPlanetInfo(rawData.transit?.Venus),
-      house: getHouseFromAscendant(
-        rawData.transit?.Venus?.zodiac_sign_name,
-        ascSign,
-      ),
-    },
-    saturn: {
-      ...getPlanetInfo(rawData.transit?.Saturn),
-      house: getHouseFromAscendant(
-        rawData.transit?.Saturn?.zodiac_sign_name,
-        ascSign,
-      ),
-    },
-    rahu: {
-      ...getPlanetInfo(rawData.transit?.Rahu),
-      house: getHouseFromAscendant(
-        rawData.transit?.Rahu?.zodiac_sign_name,
-        ascSign,
-      ),
-    },
-    ketu: {
-      ...getPlanetInfo(rawData.transit?.Ketu),
-      house: getHouseFromAscendant(
-        rawData.transit?.Ketu?.zodiac_sign_name,
-        ascSign,
-      ),
-    },
-  };
+  // const myTransit = {
+  //   ascendant: {
+  //     ...getPlanetInfo(rawData.natal?.Ascendant),
+  //     house: getHouseFromAscendant(
+  //       rawData.natal?.Ascendant?.zodiac_sign_name,
+  //       ascSign,
+  //     ),
+  //   },
+  //   sun: {
+  //     ...getPlanetInfo(rawData.transit?.Sun),
+  //     house: getHouseFromAscendant(
+  //       rawData.transit?.Sun?.zodiac_sign_name,
+  //       ascSign,
+  //     ),
+  //   },
+  //   moon: {
+  //     ...getPlanetInfo(rawData.transit?.Moon),
+  //     house: getHouseFromAscendant(
+  //       rawData.transit?.Moon?.zodiac_sign_name,
+  //       ascSign,
+  //     ),
+  //   },
+  //   mars: {
+  //     ...getPlanetInfo(rawData.transit?.Mars),
+  //     house: getHouseFromAscendant(
+  //       rawData.transit?.Mars?.zodiac_sign_name,
+  //       ascSign,
+  //     ),
+  //   },
+  //   mercury: {
+  //     ...getPlanetInfo(rawData.transit?.Mercury),
+  //     house: getHouseFromAscendant(
+  //       rawData.transit?.Mercury?.zodiac_sign_name,
+  //       ascSign,
+  //     ),
+  //   },
+  //   jupiter: {
+  //     ...getPlanetInfo(rawData.transit?.Jupiter),
+  //     house: getHouseFromAscendant(
+  //       rawData.transit?.Jupiter?.zodiac_sign_name,
+  //       ascSign,
+  //     ),
+  //   },
+  //   venus: {
+  //     ...getPlanetInfo(rawData.transit?.Venus),
+  //     house: getHouseFromAscendant(
+  //       rawData.transit?.Venus?.zodiac_sign_name,
+  //       ascSign,
+  //     ),
+  //   },
+  //   saturn: {
+  //     ...getPlanetInfo(rawData.transit?.Saturn),
+  //     house: getHouseFromAscendant(
+  //       rawData.transit?.Saturn?.zodiac_sign_name,
+  //       ascSign,
+  //     ),
+  //   },
+  //   rahu: {
+  //     ...getPlanetInfo(rawData.transit?.Rahu),
+  //     house: getHouseFromAscendant(
+  //       rawData.transit?.Rahu?.zodiac_sign_name,
+  //       ascSign,
+  //     ),
+  //   },
+  //   ketu: {
+  //     ...getPlanetInfo(rawData.transit?.Ketu),
+  //     house: getHouseFromAscendant(
+  //       rawData.transit?.Ketu?.zodiac_sign_name,
+  //       ascSign,
+  //     ),
+  //   },
+  // };
 
   const now = new Date();
   const allYoginiDashas = rawData.yogini?.allDashas || [];
@@ -884,18 +884,18 @@ export async function buildMasterPromptV5({ question, memory, rawData }) {
     : null;
   const vimsottariCutoff = vimsottariBirthDate
     ? new Date(
-        vimsottariBirthDate.getFullYear() + 20,
-        vimsottariBirthDate.getMonth(),
-        vimsottariBirthDate.getDate(),
-      )
+      vimsottariBirthDate.getFullYear() + 20,
+      vimsottariBirthDate.getMonth(),
+      vimsottariBirthDate.getDate(),
+    )
     : null;
 
   const filteredVimsottari = {
     ...rawData.vimsottari,
     allDashas: vimsottariCutoff
       ? allVimsottariDashas.filter(
-          (d) => new Date(d.start_date) < vimsottariCutoff,
-        )
+        (d) => new Date(d.start_date) < vimsottariCutoff,
+      )
       : allVimsottariDashas,
   };
 
@@ -912,22 +912,25 @@ export async function buildMasterPromptV5({ question, memory, rawData }) {
       rahu: getPlanetInfo(rawData.natal?.Rahu),
       ketu: getPlanetInfo(rawData.natal?.Ketu),
     },
-    // transit: {
-    //   sun: getPlanetInfo(rawData.transit?.Sun),
-    //   moon: getPlanetInfo(rawData.transit?.Moon),
-    //   mars: getPlanetInfo(rawData.transit?.Mars),
-    //   mercury: getPlanetInfo(rawData.transit?.Mercury),
-    //   jupiter: getPlanetInfo(rawData.transit?.Jupiter),
-    //   venus: getPlanetInfo(rawData.transit?.Venus),
-    //   saturn: getPlanetInfo(rawData.transit?.Saturn),
-    //   rahu: getPlanetInfo(rawData.transit?.Rahu),
-    //   ketu: getPlanetInfo(rawData.transit?.Ketu),
-    //   ascendant: getPlanetInfo(rawData.transit?.Ascendant),
-    // },
-    myCurrentTransit: {
+    transit: {
       datetime: now.toISOString(),
-      data: myTransit,
+      data: {
+        sun: getPlanetInfo(rawData.transit?.Sun),
+        moon: getPlanetInfo(rawData.transit?.Moon),
+        mars: getPlanetInfo(rawData.transit?.Mars),
+        mercury: getPlanetInfo(rawData.transit?.Mercury),
+        jupiter: getPlanetInfo(rawData.transit?.Jupiter),
+        venus: getPlanetInfo(rawData.transit?.Venus),
+        saturn: getPlanetInfo(rawData.transit?.Saturn),
+        rahu: getPlanetInfo(rawData.transit?.Rahu),
+        ketu: getPlanetInfo(rawData.transit?.Ketu),
+        ascendant: getPlanetInfo(rawData.transit?.Ascendant),
+      }
     },
+    // myCurrentTransit: {
+    //   datetime: now.toISOString(),
+    //   data: myTransit,
+    // },
     vimsottariDasha: {
       activeVimsottari: dashaContext,
       allVimsottari: filteredVimsottari,
@@ -941,7 +944,7 @@ export async function buildMasterPromptV5({ question, memory, rawData }) {
       activeYoginiAntarEnd: activeYoginiAntarObj?.endDate,
       allYoginiDashas: filteredYoginiDashas,
     },
-    aiPersona: rawData.aiPersona,
+    // aiPersona: rawData.aiPersona,
   };
   // Replace placeholders in MASTER_PROMPT_TEMPLATE_HTML
   let prompt = MASTER_PROMPT_TEMPLATE_SOULFUL_HTML.replace(
@@ -950,8 +953,11 @@ export async function buildMasterPromptV5({ question, memory, rawData }) {
   ).replace('{{user_query}}', question);
   // Add memory context if present
   if (memory && memory.length > 0) {
-    prompt += `\n\nPrevious Conversation History:\n${JSON.stringify(memory, null, 2)}`;
+    prompt += `\n\nPrevious Conversation History:\n${memory}`;
   }
+  // const oneLine = prompt
+  //   .replace(/\s+/g, ' ')   // collapse whitespace
+  //   .trim();
 
   console.log('✨ Master Prompt V5 build complete');
   return prompt;

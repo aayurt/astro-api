@@ -292,8 +292,7 @@ const getAstroData = async (
       lastError = error;
 
       console.log(
-        `❌ Key failed: ${key.substring(0, 5)}..., Status: ${response.status}, Error: ${
-          error.error || error.message || 'Unknown'
+        `❌ Key failed: ${key.substring(0, 5)}..., Status: ${response.status}, Error: ${error.error || error.message || 'Unknown'
         }`,
       );
 
@@ -316,8 +315,7 @@ const getAstroData = async (
   // ❌ If all keys failed
   if (!response || !response.ok) {
     throw new Error(
-      `Astro API error: ${
-        response ? response.statusText : 'All keys failed'
+      `Astro API error: ${response ? response.statusText : 'All keys failed'
       } - ${JSON.stringify(lastError)}`,
     );
   }
@@ -366,9 +364,9 @@ const getAstroData = async (
         typeof data.output[1] === 'object' &&
         !Array.isArray(data.output[1])
         ? Object.entries(data.output[1]).map(([name, val]) => ({
-            name,
-            ...val,
-          }))
+          name,
+          ...val,
+        }))
         : data.output[0] && typeof data.output[0] === 'object'
           ? Object.values(data.output[0])
           : data.output
@@ -777,7 +775,7 @@ app.get('/api/astrology/my-transit', getUser, async (req, res) => {
       cachedTransit?.myTransit &&
       cachedTransit?.myTransitUpdatedAt &&
       Date.now() - new Date(cachedTransit.myTransitUpdatedAt).getTime() <
-        ONE_HOUR
+      ONE_HOUR
     ) {
       console.log('✅ Returning cached myTransit (fresh)');
       return res.json(cachedTransit.myTransit);
@@ -932,7 +930,7 @@ app.get('/api/user/coins', getUser, async (req, res) => {
     const canClaim =
       !user.lastClaimedAt ||
       Date.now() - new Date(user.lastClaimedAt).getTime() >=
-        24 * 60 * 60 * 1000;
+      24 * 60 * 60 * 1000;
 
     res.json({
       coins: user.coins,
@@ -1195,10 +1193,10 @@ app.get('/api/astrology/summary', getUser, async (req, res) => {
     const ykInfo = yogakarakaMap[ascSign];
     const yogakaraka = ykInfo
       ? {
-          name: ykInfo.name,
-          houses: ykInfo.houses,
-          details: natal[ykInfo.name],
-        }
+        name: ykInfo.name,
+        houses: ykInfo.houses,
+        details: natal[ykInfo.name],
+      }
       : null;
 
     const rawData = {
@@ -1270,7 +1268,7 @@ const prepareAstroRawData = async (user) => {
     (currentUser.updatedAt &&
       existing.updatedAt &&
       new Date(currentUser.updatedAt).getTime() >
-        new Date(existing.updatedAt).getTime());
+      new Date(existing.updatedAt).getTime());
 
   if (isCacheStale && existing) {
     console.log(
@@ -1289,10 +1287,10 @@ const prepareAstroRawData = async (user) => {
     !isCacheStale && existing?.mahaDashas
       ? Promise.resolve(existing.mahaDashas)
       : getAstroData(
-          currentUser,
-          'vimsottari/maha-dasas-and-antar-dasas',
-          'mahaDashas',
-        ),
+        currentUser,
+        'vimsottari/maha-dasas-and-antar-dasas',
+        'mahaDashas',
+      ),
     isGlobalTransitFresh
       ? Promise.resolve(globalTransit.data)
       : getAstroData(currentUser, 'planets/extended', 'transit', true),
@@ -1506,9 +1504,10 @@ app.post('/api/ai/chat', getUser, async (req, res) => {
     console.log('✅ Master Prompt built successfully');
     const qwenChatId = conversation.qwenChatId || null;
     let aiResponse = '';
+    let qwenResult = null;  // Declare outside try block
     try {
       console.log('👺 Processing Qwen with Master Prompt...');
-      const qwenResult = await askQwenLib(masterPrompt, qwenChatId);
+      qwenResult = await askQwenLib(masterPrompt, qwenChatId);
       aiResponse = qwenResult.response;
       if (qwenResult.conversationId && !conversation.qwenChatId) {
         await prisma.conversation.update({
@@ -1786,20 +1785,23 @@ app.post('/api/ai/chat5', getUser, async (req, res) => {
         id: { not: userMessage.id },
       },
       orderBy: { createdAt: 'desc' },
-      take: 10,
+      take: 8,
     });
 
-    const memory = previousMessages.reverse().map((m) => {
+    const historyString = previousMessages.reverse().map((m) => {
       let content = m.content;
       if (m.role === 'assistant') {
         // Simple summary for memory efficiency
         content =
-          m.content.length > 200
-            ? m.content.substring(0, 200) + '...'
+          m.content.length > 150
+            ? m.content.substring(0, 150) + '...'
             : m.content;
       }
       return { role: m.role, content };
     });
+    const memory = historyString
+      .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+      .join('\n');
 
     // Fetch Astrology Data
     console.log('🔭 Fetching Astrology Data...');
