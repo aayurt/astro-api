@@ -775,7 +775,7 @@ export async function buildMasterPromptV5({ question, memory, rawData }) {
   });
 
   const dashaContext = findDashaForDateRange(rawData.vimsottari, null);
-  const ascSign = rawData.natal?.Ascendant?.zodiac_sign_name;
+  // const ascSign = rawData.natal?.Ascendant?.zodiac_sign_name;
 
   // const myTransit = {
   //   ascendant: {
@@ -946,6 +946,7 @@ export async function buildMasterPromptV5({ question, memory, rawData }) {
     },
     // aiPersona: rawData.aiPersona,
   };
+  console.log({ natal: fullPayload.natal })
   // Replace placeholders in MASTER_PROMPT_TEMPLATE_HTML
   let prompt = MASTER_PROMPT_TEMPLATE_SOULFUL_HTML.replace(
     '{{payload}}',

@@ -14,191 +14,79 @@ chromium.use(stealthPlugin());
  */
 export class GeminiWebService {
   constructor() {
-    this.browser = null;
-    this.context = null;
-    this.page = null;
     this.authPath = path.join(__dirname, '../../auth_states/gemini_auth.json');
   }
 
   /**
-   * Initialize the Gemini session using saved auth state
-   */
-  async init() {
-    console.log('🚀 Initializing Gemini Web Service...');
-    const headless = process.env.BROWSER_HEADLESS === 'true';
-
-    console.log(`  - Browser mode: ${headless ? 'Headless' : 'Headed'}`);
-    this.browser = await chromium.launch({
-      headless: headless,
-      args: ['--no-sandbox', '--disable-setuid-sandbox'],
-    });
-
-    // Try to load auth state
-    try {
-      console.log(`  - Loading session from: ${this.authPath}`);
-      this.context = await this.browser.newContext({
-        storageState: this.authPath,
-        viewport: { width: 1280, height: 720 },
-      });
-    } catch (error) {
-      console.warn(
-        "⚠️  Auth state not found. Please run 'npm run auth' first.",
-      );
-      this.context = await this.browser.newContext({
-        viewport: { width: 1280, height: 720 },
-      });
-    }
-
-    this.page = await this.context.newPage();
-    console.log('  - Navigating to Gemini App...');
-    await this.page.goto('https://gemini.google.com/app', {
-      timeout: 60000,
-      waitUntil: 'domcontentloaded',
-    });
-    console.log('  - Navigated to Gemini App successfully.');
-
-    // Handle Google consent screen if it appears
-    await this._handleConsent();
-
-    // Check if we are logged in
-    try {
-      await this.page.waitForSelector(GEMINI_SELECTORS.prompt_input, {
-        timeout: 10000,
-      });
-      console.log('✅  Gemini session initialized successfully.');
-    } catch (error) {
-      console.error(
-        "❌  Not logged in or input not found. Please run 'npm run auth' to set up authentication.",
-      );
-      // Take a screenshot for debugging if possible
-      try {
-        await this.page.screenshot({ path: 'gemini-init-error.png' });
-        console.log('📸  Screenshot saved to gemini-init-error.png');
-      } catch (e) {}
-      throw new Error('Authentication required or UI changed');
-    }
-  }
-
-  /**
-   * Handle the "Before you continue to Google" consent screen if it appears
-   */
-  async _handleConsent() {
-    try {
-      // Small wait to allow consent modal to appear
-      await this.page.waitForTimeout(2000);
-
-      // 1. Look for the "Accept all" button
-      const consentButton = await this.page.$(
-        GEMINI_SELECTORS.consent_accept_all,
-      );
-      const consentButtonAlt = await this.page.$(
-        GEMINI_SELECTORS.consent_accept_all_alt,
-      );
-
-      if (consentButton || consentButtonAlt) {
-        console.log(
-          '🤝  Google consent screen detected. Clicking "Accept all"...',
-        );
-        const button = consentButton || consentButtonAlt;
-        await button.click();
-        // Wait a bit for the redirect to finish
-        await this.page.waitForTimeout(2000);
-        console.log('✅  Consent screen handled.');
-      }
-
-      // 2. Handle "Stay signed out" or "Maybe later" popups if they appear
-      const staySignedOut = await this.page.$(GEMINI_SELECTORS.stay_signed_out);
-      const maybeLater = await this.page.$(GEMINI_SELECTORS.maybe_later);
-
-      if (staySignedOut) {
-        console.log('🤝  "Stay signed out" popup detected. Clicking...');
-        await staySignedOut.click();
-        await this.page.waitForTimeout(1000);
-      } else if (maybeLater) {
-        console.log('🤝  "Maybe later" popup detected. Clicking...');
-        await maybeLater.click();
-        await this.page.waitForTimeout(1000);
-      }
-
-      // 3. Double check if the page content contains "Before you continue to Google"
-      const content = await this.page.content();
-      if (content.includes('Before you continue to Google')) {
-        console.log(
-          '🤝  Consent screen text detected but button not found by selector. Trying generic approach...',
-        );
-        // Try clicking any button that contains "Accept all"
-        const buttons = await this.page.$$('button');
-        for (const btn of buttons) {
-          const text = await btn.innerText();
-          if (
-            text.toLowerCase().includes('accept all') ||
-            text.toLowerCase().includes('agree')
-          ) {
-            await btn.click();
-            await this.page.waitForTimeout(2000);
-            console.log(`✅  Clicked button with text: "${text}"`);
-            return;
-          }
-        }
-      }
-    } catch (error) {
-      console.warn('⚠️  Error handling consent screen:', error.message);
-    }
-  }
-
-  /**
    * Send a prompt to Gemini and get the response
+   * Creates fresh browser per request (like qwen.js pattern)
    * @param {string} prompt
    * @param {number} retryCount
    * @returns {Promise<string>}
    */
   async ask(prompt, retryCount = 0) {
-    try {
-      if (!this.page) await this.init();
+    let browser = null;
+    let page = null;
 
-      // Check if we are still on the app page
-      const url = this.page.url();
-      if (!url.includes('gemini.google.com/app')) {
-        console.log('🔄  Not on Gemini app page, re-navigating...');
-        await this.page.goto('https://gemini.google.com/app', {
-          waitUntil: 'domcontentloaded',
+    try {
+      const headless = process.env.BROWSER_HEADLESS === 'true';
+      console.log(`  - Browser mode: ${headless ? 'Headless' : 'Headed'}`);
+
+      browser = await chromium.launch({
+        headless: headless,
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      });
+
+      let context;
+      try {
+        context = await browser.newContext({
+          storageState: this.authPath,
+          viewport: { width: 1280, height: 720 },
         });
-        await this._handleConsent();
+      } catch (error) {
+        console.warn("⚠️  Auth state not found. Using anonymous session.");
+        context = await browser.newContext({
+          viewport: { width: 1280, height: 720 },
+        });
       }
+
+      page = await context.newPage();
+
+      console.log('  - Navigating to Gemini App...');
+      await page.goto('https://gemini.google.com/app', {
+        timeout: 60000,
+        waitUntil: 'domcontentloaded',
+      });
+
+      await this._handleConsent(page);
 
       console.log(
         `💬  Sending prompt: "${prompt.substring(0, 50)}${prompt.length > 50 ? '...' : ''}"`,
       );
 
-      // Wait for input to be ready
-      await this.page.waitForSelector(GEMINI_SELECTORS.prompt_input, {
+      await page.waitForSelector(GEMINI_SELECTORS.prompt_input, {
         timeout: 30000,
       });
 
-      // Clear existing text if any and type new prompt
-      await this.page.click(GEMINI_SELECTORS.prompt_input);
-      await this.page.fill(GEMINI_SELECTORS.prompt_input, prompt);
-      await this.page.keyboard.press('Enter');
+      await page.click(GEMINI_SELECTORS.prompt_input);
+      await page.fill(GEMINI_SELECTORS.prompt_input, prompt);
+      await page.keyboard.press('Enter');
 
-      // Wait for the response to start generating
       console.log('⏳  Waiting for Gemini to finish generating...');
 
-      // Wait for the copy button to appear (indicating response is complete)
-      await this.page.waitForSelector(GEMINI_SELECTORS.done_indicator, {
-        timeout: 90000, // Increased timeout for long readings
+      await page.waitForSelector(GEMINI_SELECTORS.done_indicator, {
+        timeout: 90000,
       });
 
-      // Small delay to ensure text is rendered
-      await this.page.waitForTimeout(2000);
+      await page.waitForTimeout(2000);
 
-      // Get all message-content elements
-      const responses = await this.page.$$(GEMINI_SELECTORS.response_container);
+      const responses = await page.$$(GEMINI_SELECTORS.response_container);
       const lastResponse = responses[responses.length - 1];
 
       if (!lastResponse) {
         throw new Error(
           'No response found with selector: ' +
-            GEMINI_SELECTORS.response_container,
+          GEMINI_SELECTORS.response_container,
         );
       }
 
@@ -211,52 +99,80 @@ export class GeminiWebService {
         error.message,
       );
 
-      if (retryCount < 1) {
-        console.log('🔄  Retrying with re-initialization...');
-        if (this.browser) await this.browser.close();
-        this.page = null;
-        this.browser = null;
+      if (retryCount < 1 && page) {
+        console.log('🔄 Retrying...');
         return this.ask(prompt, retryCount + 1);
       }
 
-      // Final failure
-      try {
-        if (this.page)
-          await this.page.screenshot({ path: 'gemini-ask-error.png' });
-      } catch (e) {}
+      if (page) {
+        try {
+          await page.screenshot({ path: 'gemini-ask-error.png' });
+          console.log('📸  Screenshot saved to gemini-ask-error.png');
+        } catch (e) { }
+      }
 
       return 'Error: Could not get response from Gemini web interface. Please check server logs.';
+    } finally {
+      if (browser) {
+        console.log('🔌 Closing Gemini session...');
+        await browser.close();
+        console.log('👋 Gemini session closed');
+      }
     }
   }
 
-  async close() {
-    if (this.browser) {
-      console.log('🔌  Closing Gemini browser session...');
-      await this.browser.close();
-      console.log('👋  Gemini session closed.');
+  async _handleConsent(page) {
+    try {
+      await page.waitForTimeout(2000);
+
+      const consentButton = await page.$(GEMINI_SELECTORS.consent_accept_all);
+      const consentButtonAlt = await page.$(GEMINI_SELECTORS.consent_accept_all_alt);
+
+      if (consentButton || consentButtonAlt) {
+        console.log(
+          '🤝  Google consent screen detected. Clicking "Accept all"...',
+        );
+        const button = consentButton || consentButtonAlt;
+        await button.click();
+        await page.waitForTimeout(2000);
+        console.log('✅  Consent screen handled.');
+      }
+
+      const staySignedOut = await page.$(GEMINI_SELECTORS.stay_signed_out);
+      const maybeLater = await page.$(GEMINI_SELECTORS.maybe_later);
+
+      if (staySignedOut) {
+        console.log('🤝  "Stay signed out" popup detected. Clicking...');
+        await staySignedOut.click();
+        await page.waitForTimeout(1000);
+      } else if (maybeLater) {
+        console.log('🤝  "Maybe later" popup detected. Clicking...');
+        await maybeLater.click();
+        await page.waitForTimeout(1000);
+      }
+
+      const content = await page.content();
+      if (content.includes('Before you continue to Google')) {
+        console.log(
+          '🤝  Consent screen text detected but button not found by selector. Trying generic approach...',
+        );
+        const buttons = await page.$$('button');
+        for (const btn of buttons) {
+          const text = await btn.innerText();
+          if (
+            text.toLowerCase().includes('accept all') ||
+            text.toLowerCase().includes('agree')
+          ) {
+            await btn.click();
+            await page.waitForTimeout(2000);
+            console.log(`✅  Clicked button with text: "${text}"`);
+            return;
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('⚠️  Error handling consent screen:', error.message);
     }
   }
 }
 
-/**
- * Convenience function to analyze content using the web service
- * @param {string} pageContent
- * @param {string} task
- */
-export async function analyzePage(pageContent, task) {
-  const gemini = new GeminiWebService();
-  try {
-    await gemini.init();
-    const prompt = `
-      Analyze the following web page content and perform the requested task.
-      
-      Task: ${task}
-      
-      Page Content:
-      ${pageContent.substring(0, 30000)}
-    `;
-    return await gemini.ask(prompt);
-  } finally {
-    // await gemini.close();
-  }
-}
