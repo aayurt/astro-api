@@ -1504,10 +1504,18 @@ app.post('/api/ai/chat', getUser, async (req, res) => {
       memory,
     });
     console.log('✅ Master Prompt built successfully');
+    const qwenChatId = conversation.qwenChatId || null;
     let aiResponse = '';
     try {
       console.log('👺 Processing Qwen with Master Prompt...');
-      aiResponse = await askQwenLib(masterPrompt);
+      const qwenResult = await askQwenLib(masterPrompt, qwenChatId);
+      aiResponse = qwenResult.response;
+      if (qwenResult.conversationId && !conversation.qwenChatId) {
+        await prisma.conversation.update({
+          where: { id: conversation.id },
+          data: { qwenChatId: qwenResult.conversationId },
+        });
+      }
       const jsonResponse = safeParseJSON(aiResponse, {
         summary:
           "I'm sorry, I'm currently unable to access my celestial insights. Please try again later.",
@@ -1545,10 +1553,12 @@ app.post('/api/ai/chat', getUser, async (req, res) => {
       },
     });
     console.log('✅ Qwen response saved successfully');
+    const returnedQwenChatId = qwenResult?.conversationId || conversation.qwenChatId;
     res.json({
       response: aiResponse,
       coinsLeft: user.coins - 1,
       conversationId: conversation.id,
+      qwenChatId: returnedQwenChatId,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
