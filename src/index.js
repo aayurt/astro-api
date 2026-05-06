@@ -15,11 +15,13 @@ import { getYoginiDasha } from './lib/astrology.js';
 import { auth } from './lib/auth.js';
 import { askQwen as askQwenLib } from './lib/qwen.js';
 import { GeminiWebService } from './services/gemini.js';
+import { GemmaService } from './services/gemma.js';
 import { trustedOrigins } from './trustedDomains.js';
 const { PrismaClient } = pkg;
 
 const prisma = new PrismaClient();
 const geminiService = new GeminiWebService();
+const gemmaService = new GemmaService();
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -201,12 +203,16 @@ const getAstroData = async (
   endpoint,
   type = null,
   useCurrentTime = false,
-  force = false
+  force = false,
 ) => {
   const ONE_DAY = 24 * 60 * 60 * 1000;
-  console.log({ force, user })
+  console.log({ force, user });
   // 🔧 0. Check Cache for per-user data types
-  if (!force && user?.id && ['extended', 'natal', 'dashaInfo', 'mahaDashas'].includes(type)) {
+  if (
+    !force &&
+    user?.id &&
+    ['extended', 'natal', 'dashaInfo', 'mahaDashas'].includes(type)
+  ) {
     try {
       const existing = await prisma.astrologyData.findUnique({
         where: { userId: user.id },
@@ -265,7 +271,7 @@ const getAstroData = async (
     process.env.ASTRO_API_KEY,
     process.env.ASTRO_API_KEY_1,
     process.env.ASTRO_API_KEY_2,
-    process.env.ASTRO_API_KEY_3
+    process.env.ASTRO_API_KEY_3,
   ].filter(Boolean);
 
   let response;
@@ -274,7 +280,7 @@ const getAstroData = async (
   // 🔁 2. API Key Rotation Logic
   for (const key of apiKeys) {
     if (typeof isKeyAvailable === 'function' && !isKeyAvailable(key)) continue;
-    console.log(`Using key ${key} for ${endpoint}`)
+    console.log(`Using key ${key} for ${endpoint}`);
     try {
       response = await fetch(`https://json.freeastrologyapi.com/${endpoint}`, {
         method: 'POST',
@@ -301,7 +307,9 @@ const getAstroData = async (
   }
 
   if (!response || !response.ok) {
-    throw new Error(`Astro API error: ${response?.statusText || 'All keys failed'}`);
+    throw new Error(
+      `Astro API error: ${response?.statusText || 'All keys failed'}`,
+    );
   }
 
   // ✅ 3. Data Transformation Logic
@@ -310,13 +318,16 @@ const getAstroData = async (
 
   // Transform Vimsottari Dashas
   if (data?.output && type === 'mahaDashas') {
-    const rawDashas = typeof data.output === 'string' ? JSON.parse(data.output) : data.output;
+    const rawDashas =
+      typeof data.output === 'string' ? JSON.parse(data.output) : data.output;
     processedData = Object.entries(rawDashas).map(([mahaName, antarObj]) => {
-      const antarDashas = Object.entries(antarObj).map(([antarName, times]) => ({
-        dasha: antarName,
-        start_date: times.start_time,
-        end_date: times.end_time,
-      }));
+      const antarDashas = Object.entries(antarObj).map(
+        ([antarName, times]) => ({
+          dasha: antarName,
+          start_date: times.start_time,
+          end_date: times.end_time,
+        }),
+      );
       return {
         dasha: mahaName,
         start_date: antarDashas[0]?.start_date || '',
@@ -327,12 +338,21 @@ const getAstroData = async (
   }
   // Handle Transit or DashaInfo
   else if (data?.output && (type === 'dashaInfo' || type === 'transit')) {
-    processedData = typeof data.output === 'string' ? JSON.parse(data.output) : data.output;
+    processedData =
+      typeof data.output === 'string' ? JSON.parse(data.output) : data.output;
   }
   // Transform Planet Lists into Named Maps
-  else if (data?.output && ['planets', 'extended', 'natal', 'navamsa'].includes(type)) {
+  else if (
+    data?.output &&
+    ['planets', 'extended', 'natal', 'navamsa'].includes(type)
+  ) {
     const rawData = Array.isArray(data.output)
-      ? (data.output[1] && !Array.isArray(data.output[1]) ? Object.entries(data.output[1]).map(([name, val]) => ({ name, ...val })) : data.output)
+      ? data.output[1] && !Array.isArray(data.output[1])
+        ? Object.entries(data.output[1]).map(([name, val]) => ({
+            name,
+            ...val,
+          }))
+        : data.output
       : Object.values(data.output);
 
     const namedMap = {};
@@ -401,7 +421,7 @@ app.get('/api/astrology/planets', getUser, async (req, res) => {
 
 app.get('/api/astrology/planets-extended', getUser, async (req, res) => {
   const user = req.user;
-  console.log({ planetUser: user })
+  console.log({ planetUser: user });
 
   if (!user.birthDate || user.latitude === undefined) {
     return res.status(400).json({ error: 'User birth details missing' });
@@ -411,7 +431,7 @@ app.get('/api/astrology/planets-extended', getUser, async (req, res) => {
     const existing = await prisma.astrologyData.findUnique({
       where: { userId: user.id },
     });
-    console.log({ existing: existing })
+    console.log({ existing: existing });
 
     if (existing?.extended) {
       console.log('✅ DB: Fetched data for extended');
@@ -705,7 +725,13 @@ app.get('/api/astrology/transit', getUser, async (req, res) => {
     }
 
     console.log(`↻ Fetching fresh transit data for timezone ${timezone}`);
-    const data = await getAstroData(user, 'planets/extended', 'transit', true, force);
+    const data = await getAstroData(
+      user,
+      'planets/extended',
+      'transit',
+      true,
+      force,
+    );
 
     // Update global cache
     await prisma.transitCache.upsert({
@@ -743,7 +769,7 @@ app.get('/api/astrology/my-transit', getUser, async (req, res) => {
       cachedTransit?.myTransit &&
       cachedTransit?.myTransitUpdatedAt &&
       Date.now() - new Date(cachedTransit.myTransitUpdatedAt).getTime() <
-      ONE_DAY
+        ONE_DAY
     ) {
       console.log('✅ Returning cached myTransit (fresh)');
       return res.json(cachedTransit.myTransit);
@@ -892,7 +918,7 @@ app.get('/api/user/coins', getUser, async (req, res) => {
     const canClaim =
       !user.lastClaimedAt ||
       Date.now() - new Date(user.lastClaimedAt).getTime() >=
-      24 * 60 * 60 * 1000;
+        24 * 60 * 60 * 1000;
 
     res.json({
       coins: user.coins,
@@ -1155,10 +1181,10 @@ app.get('/api/astrology/summary', getUser, async (req, res) => {
     const ykInfo = yogakarakaMap[ascSign];
     const yogakaraka = ykInfo
       ? {
-        name: ykInfo.name,
-        houses: ykInfo.houses,
-        details: natal[ykInfo.name],
-      }
+          name: ykInfo.name,
+          houses: ykInfo.houses,
+          details: natal[ykInfo.name],
+        }
       : null;
 
     const rawData = {
@@ -1214,14 +1240,19 @@ const prepareAstroRawData = async (user) => {
   });
   const now = new Date();
   const ONE_DAY = 24 * 60 * 60 * 1000;
-  const isGlobalTransitFresh = globalTransit &&
-    (now.getTime() - new Date(globalTransit.updatedAt).getTime() < ONE_DAY);
+  const isGlobalTransitFresh =
+    globalTransit &&
+    now.getTime() - new Date(globalTransit.updatedAt).getTime() < ONE_DAY;
 
   // Always fetch fresh data - no user-specific caching
   // This ensures always correct data, especially after profile updates
   const [natal, mahaDashas, transit, yoginiDashas] = await Promise.all([
     getAstroData(currentUser, 'planets/extended', 'extended'),
-    getAstroData(currentUser, 'vimsottari/maha-dasas-and-antar-dasas', 'mahaDashas'),
+    getAstroData(
+      currentUser,
+      'vimsottari/maha-dasas-and-antar-dasas',
+      'mahaDashas',
+    ),
     isGlobalTransitFresh
       ? globalTransit.data
       : getAstroData(currentUser, 'planets/extended', 'transit', true),
@@ -1248,17 +1279,22 @@ const prepareAstroRawData = async (user) => {
   });
 
   // Helper for finding active dasha
-  const findActive = (list, startKey, endKey) => list?.find(item => {
-    const s = new Date(item[startKey]);
-    const e = new Date(item[endKey]);
-    return now >= s && now <= e;
-  });
+  const findActive = (list, startKey, endKey) =>
+    list?.find((item) => {
+      const s = new Date(item[startKey]);
+      const e = new Date(item[endKey]);
+      return now >= s && now <= e;
+    });
 
   const activeMahaDasha = findActive(mahaDashas, 'start_date', 'end_date');
-  const activeAntarDasha = activeMahaDasha ? findActive(activeMahaDasha.antar_dashas, 'start_date', 'end_date') : null;
+  const activeAntarDasha = activeMahaDasha
+    ? findActive(activeMahaDasha.antar_dashas, 'start_date', 'end_date')
+    : null;
 
   const activeYogini = findActive(yoginiDashas, 'startDate', 'endDate');
-  const activeYoginiAntar = activeYogini ? findActive(activeYogini.antardashas, 'startDate', 'endDate') : null;
+  const activeYoginiAntar = activeYogini
+    ? findActive(activeYogini.antardashas, 'startDate', 'endDate')
+    : null;
 
   return {
     natal,
@@ -1418,7 +1454,7 @@ app.post('/api/ai/chat', getUser, async (req, res) => {
     console.log('✅ Master Prompt built successfully');
     const qwenChatId = conversation.qwenChatId || null;
     let aiResponse = '';
-    let qwenResult = null;  // Declare outside try block
+    let qwenResult = null; // Declare outside try block
     try {
       console.log('👺 Processing Qwen with Master Prompt...');
       qwenResult = await askQwenLib(masterPrompt, qwenChatId);
@@ -1466,7 +1502,8 @@ app.post('/api/ai/chat', getUser, async (req, res) => {
       },
     });
     console.log('✅ Qwen response saved successfully');
-    const returnedQwenChatId = qwenResult?.conversationId || conversation.qwenChatId;
+    const returnedQwenChatId =
+      qwenResult?.conversationId || conversation.qwenChatId;
     res.json({
       response: aiResponse,
       coinsLeft: user.coins - 1,
@@ -1714,12 +1751,12 @@ app.post('/api/ai/chat5', getUser, async (req, res) => {
       return { role: m.role, content };
     });
     const memory = historyString
-      .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
       .join('\n');
 
     // Fetch Astrology Data
     console.log('🔭 Fetching Astrology Data...');
-    console.log("User", user)
+    console.log('User', user);
     const rawData = await prepareAstroRawData(user);
     console.log('✅ Astrology Data fetched');
 
@@ -1744,11 +1781,11 @@ app.post('/api/ai/chat5', getUser, async (req, res) => {
       aiResponse =
         "<div class='error'>I'm sorry, I'm currently unable to access my celestial insights. Please try again later.</div>";
     }
-    console.log("Ai response", {
+    console.log('Ai response', {
       conversationId: conversation.id,
 
-      aiResponse
-    })
+      aiResponse,
+    });
     // Save response
     await prisma.message.create({
       data: {
@@ -1767,6 +1804,149 @@ app.post('/api/ai/chat5', getUser, async (req, res) => {
     });
   } catch (error) {
     console.error('💥 AI-Chat5 API error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// AI Chat 6 endpoint (Gemma 4 31B model - HTML Output)
+app.post('/api/ai/chat6', getUser, async (req, res) => {
+  const { message, conversationId } = req.body;
+  console.log('--- AI Chat 6 (Gemma) Start ---');
+  console.log('Message:', message);
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+    });
+
+    if (!user) {
+      console.log('❌ User not found');
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    if (user.coins <= 0) {
+      console.log('❌ Insufficient coins');
+      return res
+        .status(403)
+        .json({ error: 'Insufficient coins. Please claim your daily coin.' });
+    }
+
+    // Deduct 1 coin
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data: { coins: user.coins - 1 },
+    });
+    console.log('💰 Coin deducted. Remaining:', user.coins - 1);
+
+    let conversation;
+    if (conversationId) {
+      conversation = await prisma.conversation.findFirst({
+        where: { id: conversationId, userId: user.id },
+      });
+    }
+
+    if (!conversation) {
+      conversation = await prisma.conversation.create({
+        data: {
+          userId: user.id,
+          title: message.substring(0, 50),
+        },
+      });
+      console.log('🆕 New conversation created:', conversation.id);
+    } else {
+      await prisma.conversation.update({
+        where: { id: conversation.id },
+        data: { updatedAt: new Date() },
+      });
+      console.log('🔄 Existing conversation updated:', conversation.id);
+    }
+
+    // Store user message
+    const userMessage = await prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        role: 'user',
+        content: message,
+      },
+    });
+
+    // Fetch previous context
+    const previousMessages = await prisma.message.findMany({
+      where: {
+        conversationId: conversation.id,
+        id: { not: userMessage.id },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 8,
+    });
+
+    const historyString = previousMessages.reverse().map((m) => {
+      let content = m.content;
+      if (m.role === 'assistant') {
+        // Simple summary for memory efficiency
+        content =
+          m.content.length > 150
+            ? m.content.substring(0, 150) + '...'
+            : m.content;
+      }
+      return { role: m.role, content };
+    });
+    const memory = historyString
+      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+      .join('\n');
+
+    // Fetch Astrology Data
+    console.log('🔭 Fetching Astrology Data...');
+    console.log('User', user);
+    const rawData = await prepareAstroRawData(user);
+    console.log('✅ Astrology Data fetched');
+
+    // Build Master Prompt V5
+    const masterPrompt = await buildMasterPromptV5({
+      question: message,
+      memory,
+      rawData,
+    });
+
+    let aiResponse = '';
+    try {
+      console.log('👺 Sending Master Prompt V5 to Gemma...');
+      aiResponse = await gemmaService.ask(masterPrompt);
+      // console.log('Raw Gemma response:', aiResponse);
+      // Clean up potential markdown backticks
+      aiResponse = aiResponse.replace(/```html|```/g, '').trim();
+
+      // Sanitize: ensure content starts from <div class="astrology-response"> tag
+      const astrologyResponseTag = '<div class="astrology-response">';
+      const lastIndex = aiResponse.lastIndexOf(astrologyResponseTag);
+      if (lastIndex !== -1) {
+        aiResponse = aiResponse.substring(lastIndex);
+      }
+
+      console.log('✅ Gemma response received (HTML)');
+    } catch (err) {
+      console.error('🔥 Gemma Error:', err);
+      aiResponse =
+        "<div class='error'>I'm sorry, I'm currently unable to access my celestial insights. Please try again later.</div>";
+    }
+    // Save response
+    await prisma.message.create({
+      data: {
+        conversationId: conversation.id,
+        role: 'assistant',
+        content: aiResponse,
+      },
+    });
+    console.log('💾 Assistant response saved to DB');
+
+    console.log('--- AI Chat 6 (Gemma) Complete ---');
+    res.json({
+      response: aiResponse,
+      coinsLeft: user.coins - 1,
+      conversationId: conversation.id,
+    });
+  } catch (error) {
+    console.error('💥 AI-Chat6 API error:', error);
     res.status(500).json({ error: error.message });
   }
 });

@@ -259,15 +259,15 @@ export function buildPredictionPayload(data, dashaContext, classification) {
     ...(isFuture
       ? {}
       : {
-        transit: {
-          sun: getPlanetInfo(data.transit?.Sun),
-          moon: getPlanetInfo(data.transit?.Moon),
-          saturn: getPlanetInfo(data.transit?.Saturn),
-          jupiter: getPlanetInfo(data.transit?.Jupiter),
-          rahu: getPlanetInfo(data.transit?.Rahu),
-          ketu: getPlanetInfo(data.transit?.Ketu),
-        },
-      }),
+          transit: {
+            sun: getPlanetInfo(data.transit?.Sun),
+            moon: getPlanetInfo(data.transit?.Moon),
+            saturn: getPlanetInfo(data.transit?.Saturn),
+            jupiter: getPlanetInfo(data.transit?.Jupiter),
+            rahu: getPlanetInfo(data.transit?.Rahu),
+            ketu: getPlanetInfo(data.transit?.Ketu),
+          },
+        }),
   };
 }
 
@@ -884,18 +884,18 @@ export async function buildMasterPromptV5({ question, memory, rawData }) {
     : null;
   const vimsottariCutoff = vimsottariBirthDate
     ? new Date(
-      vimsottariBirthDate.getFullYear() + 20,
-      vimsottariBirthDate.getMonth(),
-      vimsottariBirthDate.getDate(),
-    )
+        vimsottariBirthDate.getFullYear() + 20,
+        vimsottariBirthDate.getMonth(),
+        vimsottariBirthDate.getDate(),
+      )
     : null;
 
   const filteredVimsottari = {
     ...rawData.vimsottari,
     allDashas: vimsottariCutoff
       ? allVimsottariDashas.filter(
-        (d) => new Date(d.start_date) < vimsottariCutoff,
-      )
+          (d) => new Date(d.start_date) < vimsottariCutoff,
+        )
       : allVimsottariDashas,
   };
 
@@ -925,7 +925,7 @@ export async function buildMasterPromptV5({ question, memory, rawData }) {
         rahu: getPlanetInfo(rawData.transit?.Rahu),
         ketu: getPlanetInfo(rawData.transit?.Ketu),
         ascendant: getPlanetInfo(rawData.transit?.Ascendant),
-      }
+      },
     },
     // myCurrentTransit: {
     //   datetime: now.toISOString(),
@@ -946,7 +946,6 @@ export async function buildMasterPromptV5({ question, memory, rawData }) {
     },
     // aiPersona: rawData.aiPersona,
   };
-  console.log({ natal: fullPayload.natal })
   // Replace placeholders in MASTER_PROMPT_TEMPLATE_HTML
   let prompt = MASTER_PROMPT_TEMPLATE_SOULFUL_HTML.replace(
     '{{payload}}',
