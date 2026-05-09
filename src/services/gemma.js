@@ -34,6 +34,81 @@ export class GemmaService {
       },
       stopSequences: ['User input:', 'Context:', 'User:'],
     };
+
+    // Max retry attempts for transient failures
+    this.maxRetries = 5;
+  }
+
+  _sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Determines if an error is transient and worth retrying.
+   * Non-retryable: API key errors, bad request (400), auth errors (401/403).
+   * Retryable: rate limits (429), server errors (5xx), network/timeout errors.
+   * @param {Error} error
+   * @returns {boolean}
+   */
+  _isRetryable(error) {
+    const msg = error.message || '';
+    // Never retry these
+    if (
+      msg.includes('API key') ||
+      msg.includes('API_KEY_INVALID') ||
+      msg.includes('API key not valid') ||
+      msg.includes('400') ||
+      msg.includes('PERMISSION_DENIED') ||
+      msg.includes('SAFETY') ||
+      msg.includes('blocked')
+    ) {
+      return false;
+    }
+    // Retry these
+    return true;
+  }
+
+  /**
+   * Retry an async function with exponential backoff (up to maxRetries attempts).
+   * @param {Function} fn - Async function to retry
+   * @param {string} label - Descriptive label for logs
+   * @returns {Promise<any>}
+   */
+  async _withRetry(fn, label = 'request') {
+    let lastError;
+
+    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+      try {
+        return await fn();
+      } catch (error) {
+        lastError = error;
+
+        const isRetryable = this._isRetryable(error);
+
+        if (!isRetryable || attempt === this.maxRetries) {
+          if (!isRetryable) {
+            console.error(
+              `❌ ${label} failed with non-retryable error: ${error.message}`,
+            );
+          } else {
+            console.error(
+              `❌ ${label} failed after ${this.maxRetries} attempts: ${error.message}`,
+            );
+          }
+          throw error;
+        }
+
+        // Exponential backoff: 1s, 2s, 4s, 8s
+        const delay = Math.min(1000 * Math.pow(2, attempt - 1), 10000);
+        console.warn(
+          `⚠️ ${label} attempt ${attempt}/${this.maxRetries} failed. Retrying in ${delay}ms... (${error.message})`,
+        );
+        await this._sleep(delay);
+      }
+    }
+
+    // Should never reach here, but safety net
+    throw lastError;
   }
 
   /**
@@ -43,7 +118,7 @@ export class GemmaService {
    * @returns {Promise<string>}
    */
   async ask(prompt, conversationHistory = []) {
-    try {
+    return this._withRetry(async () => {
       console.log(`👺 Using Gemma model: ${this.modelName}`);
       console.log(`📝 Prompt length: ${prompt.length} characters`);
 
@@ -65,24 +140,7 @@ export class GemmaService {
 
       console.log(`✅ Gemma response received (${text.length} characters)`);
       return text;
-    } catch (error) {
-      console.error('❌ Error in GemmaService.ask:', error.message);
-
-      // Provide more detailed error information
-      if (error.message.includes('API key')) {
-        console.error(
-          '🔑 API Key issue: Check if GOOGLE_AI_API_KEY is set correctly',
-        );
-      } else if (error.message.includes('429')) {
-        console.error(
-          '⏱️ Rate limit exceeded. Please wait before trying again.',
-        );
-      } else if (error.message.includes('400')) {
-        console.error('📝 Bad request: Check prompt format and length');
-      }
-
-      throw error;
-    }
+    }, 'GemmaService.ask');
   }
 
   /**
