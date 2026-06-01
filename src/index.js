@@ -183,19 +183,79 @@ app.post('/api/user/profile', getUser, async (req, res) => {
 });
 
 // Astrology API Endpoints
-// 🔥 In-memory key block tracking
+// 🔥 In-memory key state management
 const keyState = new Map();
+const KEY_COOLDOWN_MS = 30 * 1000;
+const MAX_CONCURRENT_PER_KEY = 3;
 
-const isKeyAvailable = (key) => {
-  const state = keyState.get(key);
-  if (!state) return true;
-  return Date.now() > state.blockedUntil;
+const getApiKeys = () => [
+  process.env.ASTRO_API_KEY,
+  process.env.ASTRO_API_KEY_1,
+  process.env.ASTRO_API_KEY_2,
+  process.env.ASTRO_API_KEY_3,
+].filter(Boolean);
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const getAvailableKey = () => {
+  const apiKeys = getApiKeys();
+  const now = Date.now();
+  let bestKey = null;
+  let bestScore = Infinity;
+
+  for (const key of apiKeys) {
+    const state = keyState.get(key);
+    if (!state) {
+      const score = keyUsage.get(key) || 0;
+      if (score < bestScore) { bestScore = score; bestKey = key; }
+      continue;
+    }
+    if (now < state.blockedUntil) continue;
+    if (state.concurrent >= MAX_CONCURRENT_PER_KEY) continue;
+    const score = keyUsage.get(key) || 0;
+    if (score < bestScore) { bestScore = score; bestKey = key; }
+  }
+
+  if (bestKey) return bestKey;
+
+  // Fallback: pick the key closest to unblocking
+  let soonest = Infinity;
+  for (const key of apiKeys) {
+    const state = keyState.get(key);
+    if (state && state.blockedUntil < soonest) {
+      soonest = state.blockedUntil;
+      bestKey = key;
+    }
+  }
+  return bestKey;
 };
 
-const blockKey = (key, duration = 60 * 60 * 1000) => {
+const keyUsage = new Map();
+
+const markKeyUsed = (key) => {
+  keyUsage.set(key, (keyUsage.get(key) || 0) + 1);
+};
+
+const blockKey = (key, duration = KEY_COOLDOWN_MS) => {
+  const state = keyState.get(key) || { concurrent: 0 };
   keyState.set(key, {
     blockedUntil: Date.now() + duration,
+    concurrent: state.concurrent,
   });
+};
+
+const acquireKey = (key) => {
+  const state = keyState.get(key) || { concurrent: 0, blockedUntil: 0 };
+  state.concurrent = (state.concurrent || 0) + 1;
+  keyState.set(key, state);
+};
+
+const releaseKey = (key) => {
+  const state = keyState.get(key);
+  if (state) {
+    state.concurrent = Math.max(0, (state.concurrent || 1) - 1);
+    keyState.set(key, state);
+  }
 };
 
 const getAstroData = async (
@@ -267,48 +327,62 @@ const getAstroData = async (
     },
   };
 
-  const apiKeys = [
-    process.env.ASTRO_API_KEY,
-    process.env.ASTRO_API_KEY_1,
-    process.env.ASTRO_API_KEY_2,
-    process.env.ASTRO_API_KEY_3,
-  ].filter(Boolean);
-
   let response;
   let lastError = null;
 
-  // 🔁 2. API Key Rotation Logic
-  for (const key of apiKeys) {
-    if (typeof isKeyAvailable === 'function' && !isKeyAvailable(key)) continue;
-    console.log(`Using key ${key} for ${endpoint}`);
+  // 🔁 API Key Rotation + Retry with Backoff
+  const maxAttempts = getApiKeys().length * 3;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const key = getAvailableKey();
+    if (!key) {
+      await sleep(1000);
+      lastError = { message: 'All keys blocked, waiting...' };
+      continue;
+    }
+
+    acquireKey(key);
+    markKeyUsed(key);
+    console.log(`[${attempt + 1}/${maxAttempts}] Using key for ${endpoint}`);
+
     try {
-      response = await fetch(`https://json.freeastrologyapi.com/${endpoint}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': key,
+      response = await fetch(
+        `https://json.freeastrologyapi.com/${endpoint}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': key,
+          },
+          body: JSON.stringify(payload),
         },
-        body: JSON.stringify(payload),
-      });
+      );
+
       if (response.ok) {
         lastError = null;
         break;
       }
 
-      const error = await response.json().catch(() => ({}));
-      lastError = error;
+      const errorBody = await response.json().catch(() => ({}));
+      lastError = errorBody;
 
-      if (response.status === 429 && typeof blockKey === 'function') {
+      if (response.status === 429) {
         blockKey(key);
+        console.warn(`⚠️  Key 429'd, cooldown ${KEY_COOLDOWN_MS}ms`);
+        await sleep(500);
+      } else {
+        console.error(`Key failed: ${response.status}`);
       }
     } catch (err) {
       lastError = { message: err.message };
+      console.error(`Key error: ${err.message}`);
+    } finally {
+      releaseKey(key);
     }
   }
 
   if (!response || !response.ok) {
     throw new Error(
-      `Astro API error: ${response?.statusText || 'All keys failed'}`,
+      `Astro API error: ${response?.statusText || 'All keys exhausted'}`,
     );
   }
 
@@ -346,24 +420,7 @@ const getAstroData = async (
     data?.output &&
     ['planets', 'extended', 'natal', 'navamsa'].includes(type)
   ) {
-    const rawData = Array.isArray(data.output)
-      ? data.output[1] && !Array.isArray(data.output[1])
-        ? Object.entries(data.output[1]).map(([name, val]) => ({
-            name,
-            ...val,
-          }))
-        : data.output
-      : Object.values(data.output);
-
-    const namedMap = {};
-    rawData.forEach((item) => {
-      const name = item?.name || item?.localized_name || item?.planet?.en;
-      if (name) {
-        const { name: _n, ...details } = item;
-        namedMap[name] = details;
-      }
-    });
-    processedData = namedMap;
+    processedData = toPlanetMap(data.output);
   }
 
   // 🚀 4. Special Case: Update Global Transit Cache
@@ -746,6 +803,42 @@ app.get('/api/astrology/transit', getUser, async (req, res) => {
   }
 });
 
+const toPlanetMap = (output) => {
+  const rawData = Array.isArray(output)
+    ? output[1] && !Array.isArray(output[1])
+      ? Object.entries(output[1]).map(([name, val]) => ({ name, ...val }))
+      : output
+    : Object.values(output);
+  const namedMap = {};
+  rawData.forEach((item) => {
+    const name = item?.name || item?.localized_name || item?.planet?.en;
+    if (name) {
+      const { name: _n, ...details } = item;
+      namedMap[name] = details;
+    }
+  });
+  return namedMap;
+};
+
+const shiftChartRelativeTo = (transitData, referenceSign) => {
+  const result = {};
+  for (const [planet, info] of Object.entries(transitData ?? {})) {
+    const transitSign = info?.sign_number || info?.current_sign || 0;
+    if (transitSign === 0) continue;
+    let relativeHouse = transitSign - referenceSign + 1;
+    if (relativeHouse <= 0) relativeHouse += 12;
+    result[planet] = {
+      ...info,
+      original_house_number: info.house_number,
+      house_number: relativeHouse,
+    };
+  }
+  if (result.Ascendant) {
+    result.Ascendant.current_sign = referenceSign;
+  }
+  return result;
+};
+
 app.get('/api/astrology/my-transit', getUser, async (req, res) => {
   const user = req.user;
 
@@ -767,6 +860,7 @@ app.get('/api/astrology/my-transit', getUser, async (req, res) => {
     if (
       !force &&
       cachedTransit?.myTransit &&
+      Object.keys(cachedTransit.myTransit).length > 0 &&
       cachedTransit?.myTransitUpdatedAt &&
       Date.now() - new Date(cachedTransit.myTransitUpdatedAt).getTime() <
         ONE_DAY
@@ -791,30 +885,13 @@ app.get('/api/astrology/my-transit', getUser, async (req, res) => {
       false,
     );
 
-    const result = {};
+    const planetMap = toPlanetMap(transitData?.output || transitData);
     const natalAscSign = natalData?.Ascendant?.current_sign;
-
     if (!natalAscSign) {
       throw new Error('Natal Ascendant sign not found');
     }
 
-    for (const [planet, info] of Object.entries(transitData ?? {})) {
-      const transitSign = info?.sign_number || 0;
-      if (transitSign === 0) continue;
-
-      let relativeHouse = transitSign - natalAscSign + 1;
-      if (relativeHouse <= 0) relativeHouse += 12;
-
-      result[planet] = {
-        ...info,
-        original_house_number: info.house_number,
-        house_number: relativeHouse,
-      };
-    }
-
-    if (result.Ascendant) {
-      result.Ascendant.current_sign = natalAscSign;
-    }
+    const result = shiftChartRelativeTo(planetMap, natalAscSign);
 
     await prisma.astrologyData.upsert({
       where: { userId: user.id },
@@ -835,6 +912,240 @@ app.get('/api/astrology/my-transit', getUser, async (req, res) => {
     return res.status(500).json({
       error: error.message || 'Internal server error',
     });
+  }
+});
+
+app.get('/api/astrology/lagna-gochar', getUser, async (req, res) => {
+  const user = req.user;
+  if (user.latitude == null || user.longitude == null) {
+    return res.status(400).json({ error: 'User location details missing' });
+  }
+
+  const force = req.query.force === 'true';
+  try {
+    const cached = await prisma.astrologyData.findUnique({
+      where: { userId: user.id },
+    });
+
+    const ONE_DAY = 24 * 60 * 60 * 1000;
+    if (
+      !force &&
+      cached?.lagnaGochar &&
+      Object.keys(cached.lagnaGochar).length > 0 &&
+      cached?.lagnaGocharUpdatedAt &&
+      Date.now() - new Date(cached.lagnaGocharUpdatedAt).getTime() < ONE_DAY
+    ) {
+      console.log('✅ Returning cached lagnaGochar');
+      return res.json(cached.lagnaGochar);
+    }
+
+    const transitData = await getAstroData(
+      user,
+      'planets/extended',
+      'transit',
+      true,
+    );
+
+    const natalData = await getAstroData(
+      user,
+      'planets/extended',
+      'natal',
+      false,
+    );
+
+    const planetMap = toPlanetMap(transitData?.output || transitData);
+    const lagnaSign = natalData?.Ascendant?.current_sign;
+    if (!lagnaSign) {
+      throw new Error('Natal Ascendant sign not found');
+    }
+
+    const result = shiftChartRelativeTo(planetMap, lagnaSign);
+
+    await prisma.astrologyData.upsert({
+      where: { userId: user.id },
+      update: {
+        lagnaGochar: result,
+        lagnaGocharUpdatedAt: new Date(),
+      },
+      create: {
+        userId: user.id,
+        lagnaGochar: result,
+        lagnaGocharUpdatedAt: new Date(),
+      },
+    });
+
+    return res.json(result);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      error: error.message || 'Internal server error',
+    });
+  }
+});
+
+app.get('/api/astrology/chandra-gochar', getUser, async (req, res) => {
+  const user = req.user;
+  if (user.latitude == null || user.longitude == null) {
+    return res.status(400).json({ error: 'User location details missing' });
+  }
+
+  const force = req.query.force === 'true';
+  try {
+    const cached = await prisma.astrologyData.findUnique({
+      where: { userId: user.id },
+    });
+
+    const ONE_DAY = 24 * 60 * 60 * 1000;
+    if (
+      !force &&
+      cached?.chandraGochar &&
+      Object.keys(cached.chandraGochar).length > 0 &&
+      cached?.chandraGocharUpdatedAt &&
+      Date.now() - new Date(cached.chandraGocharUpdatedAt).getTime() < ONE_DAY
+    ) {
+      console.log('✅ Returning cached chandraGochar');
+      return res.json(cached.chandraGochar);
+    }
+
+    const transitData = await getAstroData(
+      user,
+      'planets/extended',
+      'transit',
+      true,
+    );
+
+    const natalData = await getAstroData(
+      user,
+      'planets/extended',
+      'natal',
+      false,
+    );
+
+    const planetMap = toPlanetMap(transitData?.output || transitData);
+    const moonSign = natalData?.Moon?.current_sign;
+    if (!moonSign) {
+      throw new Error('Natal Moon sign not found');
+    }
+
+    const result = shiftChartRelativeTo(planetMap, moonSign);
+
+    await prisma.astrologyData.upsert({
+      where: { userId: user.id },
+      update: {
+        chandraGochar: result,
+        chandraGocharUpdatedAt: new Date(),
+      },
+      create: {
+        userId: user.id,
+        chandraGochar: result,
+        chandraGocharUpdatedAt: new Date(),
+      },
+    });
+
+    return res.json(result);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      error: error.message || 'Internal server error',
+    });
+  }
+});
+
+app.get('/api/astrology/all-transit', getUser, async (req, res) => {
+  const user = req.user;
+  if (user.latitude == null || user.longitude == null) {
+    return res.status(400).json({ error: 'User location details missing' });
+  }
+
+  const timezone = user.timezone || '5.5';
+  const force = req.query.force === 'true';
+
+  try {
+    // Check global transit cache
+    const cachedTransit = await prisma.transitCache.findUnique({
+      where: { timezone: timezone.toString() },
+    });
+    const ONE_DAY = 24 * 60 * 60 * 1000;
+    let transitData;
+    if (!force && cachedTransit && Date.now() - new Date(cachedTransit.updatedAt).getTime() < ONE_DAY) {
+      console.log(`✅ Returning cached transit data for timezone ${timezone}`);
+      transitData = cachedTransit.data;
+    } else {
+      console.log(`↻ Fetching fresh transit data for timezone ${timezone}`);
+      transitData = await getAstroData(user, 'planets/extended', 'transit', true, force);
+      await prisma.transitCache.upsert({
+        where: { timezone: timezone.toString() },
+        update: { data: transitData, updatedAt: new Date() },
+        create: { timezone: timezone.toString(), data: transitData },
+      });
+    }
+
+    const cachedUser = await prisma.astrologyData.findUnique({
+      where: { userId: user.id },
+    });
+
+    // Check if all cached user transit data is still fresh
+    if (!force && cachedUser?.lagnaGochar && cachedUser?.chandraGochar && cachedUser?.myTransit &&
+        Object.keys(cachedUser.lagnaGochar).length > 0 &&
+        Object.keys(cachedUser.chandraGochar).length > 0 &&
+        Object.keys(cachedUser.myTransit).length > 0 &&
+        cachedUser.lagnaGocharUpdatedAt &&
+        Date.now() - new Date(cachedUser.lagnaGocharUpdatedAt).getTime() < ONE_DAY) {
+      console.log('✅ Returning all cached user transit data');
+      return res.json({
+        transit: transitData,
+        myTransit: cachedUser.myTransit,
+        lagnaGochar: cachedUser.lagnaGochar,
+        chandraGochar: cachedUser.chandraGochar,
+      });
+    }
+
+    const natalData = await getAstroData(user, 'planets/extended', 'natal', false);
+
+    const planetMap = toPlanetMap(transitData?.output || transitData);
+
+    // lagnaGochar = transit relative to natal Ascendant (same as myTransit)
+    const natalAscSign = natalData?.Ascendant?.current_sign;
+    if (!natalAscSign) throw new Error('Natal Ascendant sign not found');
+    const myTransit = shiftChartRelativeTo(planetMap, natalAscSign);
+    const lagnaGochar = myTransit;
+
+    // chandraGochar = transit relative to natal Moon sign
+    const natalMoonSign = natalData?.Moon?.current_sign;
+    if (!natalMoonSign) throw new Error('Natal Moon sign not found');
+    const chandraGochar = shiftChartRelativeTo(planetMap, natalMoonSign);
+
+    // Persist all derived charts
+    await prisma.astrologyData.upsert({
+      where: { userId: user.id },
+      update: {
+        lagnaGochar,
+        lagnaGocharUpdatedAt: new Date(),
+        chandraGochar,
+        chandraGocharUpdatedAt: new Date(),
+        myTransit,
+        myTransitUpdatedAt: new Date(),
+      },
+      create: {
+        userId: user.id,
+        lagnaGochar,
+        lagnaGocharUpdatedAt: new Date(),
+        chandraGochar,
+        chandraGocharUpdatedAt: new Date(),
+        myTransit,
+        myTransitUpdatedAt: new Date(),
+      },
+    });
+
+    return res.json({
+      transit: transitData,
+      myTransit,
+      lagnaGochar,
+      chandraGochar,
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: error.message || 'Internal server error' });
   }
 });
 
@@ -1621,7 +1932,8 @@ app.post('/api/ai/chat2', getUser, async (req, res) => {
     let aiResponse = '';
     try {
       console.log('👺 Sending Master Prompt V4 to Gemini...');
-      aiResponse = await geminiService.ask(masterPrompt);
+      const geminiResult = await geminiService.ask(masterPrompt);
+      aiResponse = geminiResult.content;
 
       const jsonResponse = safeParseJSON(aiResponse, {
         paragraph_1:
@@ -1770,7 +2082,8 @@ app.post('/api/ai/chat5', getUser, async (req, res) => {
     let aiResponse = '';
     try {
       console.log('👺 Sending Master Prompt V5 to Gemini...');
-      aiResponse = await geminiService.ask(masterPrompt);
+      const geminiResult = await geminiService.ask(masterPrompt);
+      aiResponse = geminiResult.content;
 
       // Clean up potential markdown backticks
       aiResponse = aiResponse.replace(/```html|```/g, '').trim();
@@ -1808,7 +2121,7 @@ app.post('/api/ai/chat5', getUser, async (req, res) => {
   }
 });
 
-// AI Chat 6 endpoint (Gemma 4 31B model - HTML Output)
+// AI Chat 6 endpoint (Gemma/Google AI SDK - HTML Output)
 app.post('/api/ai/chat6', getUser, async (req, res) => {
   const { message, conversationId } = req.body;
   console.log('--- AI Chat 6 (Gemma) Start ---');
@@ -1862,7 +2175,7 @@ app.post('/api/ai/chat6', getUser, async (req, res) => {
     }
 
     // Store user message
-    const userMessage = await prisma.message.create({
+    await prisma.message.create({
       data: {
         conversationId: conversation.id,
         role: 'user',
@@ -1870,41 +2183,15 @@ app.post('/api/ai/chat6', getUser, async (req, res) => {
       },
     });
 
-    // Fetch previous context
-    const previousMessages = await prisma.message.findMany({
-      where: {
-        conversationId: conversation.id,
-        id: { not: userMessage.id },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 8,
-    });
-
-    const historyString = previousMessages.reverse().map((m) => {
-      let content = m.content;
-      if (m.role === 'assistant') {
-        // Simple summary for memory efficiency
-        content =
-          m.content.length > 150
-            ? m.content.substring(0, 150) + '...'
-            : m.content;
-      }
-      return { role: m.role, content };
-    });
-    const memory = historyString
-      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
-      .join('\n');
-
     // Fetch Astrology Data
     console.log('🔭 Fetching Astrology Data...');
-    console.log('User', user);
     const rawData = await prepareAstroRawData(user);
     console.log('✅ Astrology Data fetched');
 
     // Build Master Prompt V5
     const masterPrompt = await buildMasterPromptV5({
       question: message,
-      memory,
+      memory: '',
       rawData,
     });
 
@@ -1912,9 +2199,6 @@ app.post('/api/ai/chat6', getUser, async (req, res) => {
     try {
       console.log('👺 Sending Master Prompt V5 to Gemma...');
       aiResponse = await gemmaService.ask(masterPrompt);
-      // console.log('Raw Gemma response:', aiResponse);
-      // Clean up potential markdown backticks
-      aiResponse = aiResponse.replace(/```html|```/g, '').trim();
 
       // Sanitize: ensure content starts from <div class="astrology-response"> tag
       const astrologyResponseTag = '<div class="astrology-response">';
@@ -1923,12 +2207,13 @@ app.post('/api/ai/chat6', getUser, async (req, res) => {
         aiResponse = aiResponse.substring(lastIndex);
       }
 
-      console.log('✅ Gemma response received (HTML)');
+      console.log('✅ Gemini Web response received');
     } catch (err) {
-      console.error('🔥 Gemma Error:', err);
+      console.error('🔥 Gemini Web Error:', err);
       aiResponse =
         "<div class='error'>I'm sorry, I'm currently unable to access my celestial insights. Please try again later.</div>";
     }
+
     // Save response
     await prisma.message.create({
       data: {
@@ -1939,7 +2224,7 @@ app.post('/api/ai/chat6', getUser, async (req, res) => {
     });
     console.log('💾 Assistant response saved to DB');
 
-    console.log('--- AI Chat 6 (Gemma) Complete ---');
+    console.log('--- AI Chat 6 (Gemini Web) Complete ---');
     res.json({
       response: aiResponse,
       coinsLeft: user.coins - 1,
@@ -1980,7 +2265,8 @@ app.get('/api/ai/persona', getUser, async (req, res) => {
       JSON.stringify(natalData, null, 2),
     );
 
-    const aiResponse = await geminiService.ask(personaPrompt);
+    const geminiResult = await geminiService.ask(personaPrompt);
+    const aiResponse = geminiResult.content;
 
     // The template asks for raw HTML, so we store it directly.
     // We remove any potential markdown backticks that Gemini might add despite instructions.

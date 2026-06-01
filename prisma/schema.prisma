@@ -34,14 +34,15 @@ model User {
 }
 
 model Conversation {
-  id         String    @id @default(cuid())
-  userId     String
-  title      String
-  qwenChatId String?
-  createdAt  DateTime  @default(now())
-  updatedAt  DateTime  @updatedAt
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  messages   Message[]
+  id                    String    @id @default(cuid())
+  userId                String
+  title                 String
+  qwenChatId            String?
+  geminiConversationId  String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages              Message[]
 }
 
 model Message {
@@ -113,9 +114,13 @@ model AstrologyData {
   mahaDashas         Json?
   yoginiDasha        Json?
   transit            Json?
-  myTransit          Json?
-  myTransitUpdatedAt DateTime?
-  aiPersona          String?   @db.Text
+  myTransit              Json?
+  myTransitUpdatedAt     DateTime?
+  lagnaGochar            Json?
+  lagnaGocharUpdatedAt   DateTime?
+  chandraGochar          Json?
+  chandraGocharUpdatedAt DateTime?
+  aiPersona              String?   @db.Text
   updatedAt          DateTime  @updatedAt
   user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 }

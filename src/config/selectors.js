@@ -23,4 +23,11 @@ export const GEMINI_SELECTORS = {
   consent_accept_all_alt: 'button:has-text("Accept all")',
   stay_signed_out: 'button:has-text("Stay signed out")',
   maybe_later: 'button:has-text("Maybe later")',
+
+  // Nepse-adapted selectors (more robust)
+  textarea: 'div[contenteditable="true"][role="textbox"]',
+  sendButton: 'button[aria-label="Send message"]',
+  stopButton: 'button[aria-label="Stop response"]',
+  consentButton: 'button[aria-label="Accept all"]',
+  staySignedOutButton: 'button[aria-label="Stay signed out"]',
 };
