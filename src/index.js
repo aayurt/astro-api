@@ -2292,7 +2292,19 @@ const ZODIAC_SIGNS = [
   'Libra','Scorpio','Sagittarius','Capricorn','Aquarius','Pisces',
 ];
 
-// AI Transit Prediction endpoint (free, no coin deduction)
+// AI Transit Prediction endpoints (free, no coin deduction)
+app.get('/api/ai/transit-prediction', getUser, async (req, res) => {
+  try {
+    const userData = await prisma.astrologyData.findUnique({
+      where: { userId: req.user.id },
+      select: { transitPredictions: true },
+    });
+    res.json(userData?.transitPredictions || {});
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/ai/transit-prediction', getUser, async (req, res) => {
   const { transitType } = req.body;
   const validTypes = ['global', 'lagna', 'chandra'];
@@ -2302,6 +2314,18 @@ app.post('/api/ai/transit-prediction', getUser, async (req, res) => {
 
   try {
     const user = req.user;
+    const today = new Date().toISOString().slice(0, 10);
+    const cacheKey = `${transitType}_${today}`;
+
+    const userData = await prisma.astrologyData.findUnique({
+      where: { userId: user.id },
+      select: { transitPredictions: true },
+    });
+    const existing = userData?.transitPredictions?.[cacheKey];
+    if (existing?.prediction) {
+      return res.json(existing);
+    }
+
     const timezone = user.timezone || '5.5';
     const ONE_DAY = 24 * 60 * 60 * 1000;
 
@@ -2317,12 +2341,12 @@ app.post('/api/ai/transit-prediction', getUser, async (req, res) => {
         chartData = await getAstroData(user, 'planets/extended', 'transit', true, false);
       }
     } else {
-      const userData = await prisma.astrologyData.findUnique({
+      const ad = await prisma.astrologyData.findUnique({
         where: { userId: user.id },
       });
-      if (userData) {
-        if (transitType === 'lagna') chartData = userData.lagnaGochar;
-        else chartData = userData.chandraGochar;
+      if (ad) {
+        if (transitType === 'lagna') chartData = ad.lagnaGochar;
+        else chartData = ad.chandraGochar;
       }
       if (!chartData) {
         const transitRaw = await getAstroData(user, 'planets/extended', 'transit', true, false);
@@ -2370,10 +2394,26 @@ REMEDY:
     const predictionMatch = aiResponse.match(/PREDICTION:\s*([\s\S]*?)(?=REMEDY:|$)/i);
     const remedyMatch = aiResponse.match(/REMEDY:\s*([\s\S]*)/i);
 
-    res.json({
+    const result = {
       prediction: predictionMatch ? predictionMatch[1].trim() : aiResponse.trim(),
       remedy: remedyMatch ? remedyMatch[1].trim() : null,
+    };
+
+    await prisma.astrologyData.upsert({
+      where: { userId: user.id },
+      update: {
+        transitPredictions: {
+          ...(userData?.transitPredictions || {}),
+          [cacheKey]: result,
+        },
+      },
+      create: {
+        userId: user.id,
+        transitPredictions: { [cacheKey]: result },
+      },
     });
+
+    res.json(result);
   } catch (error) {
     console.error('Transit prediction error:', error);
     res.status(500).json({ error: error.message || 'Failed to generate prediction' });
