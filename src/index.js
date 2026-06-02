@@ -834,6 +834,7 @@ const shiftChartRelativeTo = (transitData, referenceSign) => {
     };
   }
   if (result.Ascendant) {
+    result.Ascendant.transit_sign = result.Ascendant.current_sign || result.Ascendant.sign_number;
     result.Ascendant.current_sign = referenceSign;
   }
   return result;
@@ -2283,6 +2284,99 @@ app.get('/api/ai/persona', getUser, async (req, res) => {
   } catch (error) {
     console.error('💥 AI-Persona API error:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+const ZODIAC_SIGNS = [
+  'Aries','Taurus','Gemini','Cancer','Leo','Virgo',
+  'Libra','Scorpio','Sagittarius','Capricorn','Aquarius','Pisces',
+];
+
+// AI Transit Prediction endpoint (free, no coin deduction)
+app.post('/api/ai/transit-prediction', getUser, async (req, res) => {
+  const { transitType } = req.body;
+  const validTypes = ['global', 'lagna', 'chandra'];
+  if (!validTypes.includes(transitType)) {
+    return res.status(400).json({ error: 'Invalid transit type' });
+  }
+
+  try {
+    const user = req.user;
+    const timezone = user.timezone || '5.5';
+    const ONE_DAY = 24 * 60 * 60 * 1000;
+
+    let chartData = null;
+
+    if (transitType === 'global') {
+      const cachedTransit = await prisma.transitCache.findUnique({
+        where: { timezone: timezone.toString() },
+      });
+      if (cachedTransit && Date.now() - new Date(cachedTransit.updatedAt).getTime() < ONE_DAY) {
+        chartData = cachedTransit.data;
+      } else {
+        chartData = await getAstroData(user, 'planets/extended', 'transit', true, false);
+      }
+    } else {
+      const userData = await prisma.astrologyData.findUnique({
+        where: { userId: user.id },
+      });
+      if (userData) {
+        if (transitType === 'lagna') chartData = userData.lagnaGochar;
+        else chartData = userData.chandraGochar;
+      }
+      if (!chartData) {
+        const transitRaw = await getAstroData(user, 'planets/extended', 'transit', true, false);
+        const planetMap = toPlanetMap(transitRaw?.output || transitRaw);
+        const natalData = await getAstroData(user, 'planets/extended', 'natal', false, false);
+        const refSign = transitType === 'lagna'
+          ? natalData?.Ascendant?.current_sign
+          : natalData?.Moon?.current_sign;
+        if (!refSign) throw new Error(`Natal ${transitType === 'lagna' ? 'Ascendant' : 'Moon'} sign not found`);
+        chartData = shiftChartRelativeTo(planetMap, refSign);
+      }
+    }
+
+    const planetLines = Object.entries(chartData || {})
+      .filter(([name]) => !['Ascendant', 'MC', 'Descendant', 'IC'].includes(name))
+      .map(([name, p]) => {
+        const sign = p.zodiac_sign_name || ZODIAC_SIGNS[(p.current_sign || p.sign_number || 1) - 1] || '';
+        const retro = p.isRetro === 'true' ? ' (R)' : '';
+        const house = p.house_number || '';
+        return `${name}: ${((p.normDegree || 0) % 30).toFixed(1)}° ${sign}, House ${house}${retro}`;
+      })
+      .join('\n');
+
+    const typeLabels = {
+      global: 'Global Transit (current sky positions for your location)',
+      lagna: 'Lagna Gochar (transit relative to your Ascendant sign)',
+      chandra: 'Chandra Gochar (transit relative to your Moon sign)',
+    };
+
+    const prompt = `You are a master Vedic astrologer. Analyze these transit planetary positions for ${typeLabels[transitType]}:
+
+${planetLines}
+
+Provide a brief, insightful prediction about the current cosmic energies and how they may affect the person. If there are challenging aspects that call for a remedy, suggest one simple Vedic remedy (mantra, gemstone, or practice). 
+
+Format your response EXACTLY as follows (keep each section concise — 2-4 sentences each):
+
+PREDICTION:
+(Your astrological prediction here)
+
+REMEDY:
+(Specific remedy or "None needed" if the transits are generally favorable)`;
+
+    const aiResponse = await gemmaService.ask(prompt);
+    const predictionMatch = aiResponse.match(/PREDICTION:\s*([\s\S]*?)(?=REMEDY:|$)/i);
+    const remedyMatch = aiResponse.match(/REMEDY:\s*([\s\S]*)/i);
+
+    res.json({
+      prediction: predictionMatch ? predictionMatch[1].trim() : aiResponse.trim(),
+      remedy: remedyMatch ? remedyMatch[1].trim() : null,
+    });
+  } catch (error) {
+    console.error('Transit prediction error:', error);
+    res.status(500).json({ error: error.message || 'Failed to generate prediction' });
   }
 });
 
