@@ -1,0 +1,25 @@
+{
+  "files": [
+    {
+      "path": "/Users/aayurtshrestha/Projects/supreme/googleDrive/brihatParasara/BRIHAT_PARASARA_HORA_SASTRA.md",
+      "source": "bphs_vol1",
+      "headingPattern": "^##\\s+(.+)$",
+      "subHeadingPattern": "^###\\s+(.+)$",
+      "maxChunkSize": 2500
+    },
+    {
+      "path": "/Users/aayurtshrestha/Projects/supreme/googleDrive/brihatParasara/BRIHAT_PARASARA_HORA_SASTRA_VOL2.md",
+      "source": "bphs_vol2",
+      "headingPattern": "^##\\s+(.+)$",
+      "subHeadingPattern": "^###\\s+(.+)$",
+      "maxChunkSize": 2500
+    },
+    {
+      "path": "/Users/aayurtshrestha/Projects/supreme/googleDrive/brihatParasara/brihat_prasara_online_sumaary.md",
+      "source": "bphs_online",
+      "headingPattern": "^#\\s+(.+)$",
+      "subHeadingPattern": "^##\\s+(.+)$",
+      "maxChunkSize": 2500
+    }
+  ]
+}
