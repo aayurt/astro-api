@@ -761,7 +761,7 @@ export async function buildMasterPromptV4({ question, memory, rawData }) {
   return prompt;
 }
 
-export async function buildMasterPromptV5({ question, memory, rawData }) {
+export async function buildMasterPromptV5({ question, memory, rawData, parasaraContext }) {
   console.log('🚀 Building Master Prompt V5 (HTML Output)...');
 
   // Reuse the logic from V4 for consistent enriched data
@@ -947,10 +947,14 @@ export async function buildMasterPromptV5({ question, memory, rawData }) {
     // aiPersona: rawData.aiPersona,
   };
   // Replace placeholders in MASTER_PROMPT_TEMPLATE_HTML
+  const questionSection = parasaraContext
+    ? `## Vedic Text Reference\nQuote relevant verses from the Brihat Parasara Hora Sastra by chapter name when applicable. Here is relevant context:\n\n${parasaraContext}\n\n## User Question\n${question}`
+    : question;
+
   let prompt = MASTER_PROMPT_TEMPLATE_SOULFUL_HTML.replace(
     '{{payload}}',
     JSON.stringify(fullPayload, null, 2),
-  ).replace('{{user_query}}', question);
+  ).replace('{{user_query}}', questionSection);
   // Add memory context if present
   if (memory && memory.length > 0) {
     prompt += `\n\nPrevious Conversation History:\n${memory}`;

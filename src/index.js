@@ -16,6 +16,7 @@ import { auth } from './lib/auth.js';
 import { askQwen as askQwenLib } from './lib/qwen.js';
 import { GeminiWebService } from './services/gemini.js';
 import { GemmaService } from './services/gemma.js';
+import { xalen } from './services/xalen.js';
 import { trustedOrigins } from './trustedDomains.js';
 const { PrismaClient } = pkg;
 
@@ -70,6 +71,22 @@ const getUser = async (req, res, next) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+
+const resolveProfile = async (req, res, next) => {
+  const profileId = req.query.profileId || req.body?.profileId;
+  if (profileId) {
+    const profile = await prisma.profile.findFirst({
+      where: { id: profileId, userId: req.user.id },
+    }).catch(() => null);
+    if (profile) {
+      const { id, userId, createdAt, updatedAt, ...profileData } = profile;
+      req.user = { ...req.user, ...profileData, _skipAstroCache: true };
+    }
+  }
+  next();
+};
+
+const withProfile = [getUser, resolveProfile];
 
 app.get('/api', async (req, res) => {
   res.json({ success: true });
@@ -182,82 +199,6 @@ app.post('/api/user/profile', getUser, async (req, res) => {
   }
 });
 
-// Astrology API Endpoints
-// 🔥 In-memory key state management
-const keyState = new Map();
-const KEY_COOLDOWN_MS = 30 * 1000;
-const MAX_CONCURRENT_PER_KEY = 3;
-
-const getApiKeys = () => [
-  process.env.ASTRO_API_KEY,
-  process.env.ASTRO_API_KEY_1,
-  process.env.ASTRO_API_KEY_2,
-  process.env.ASTRO_API_KEY_3,
-].filter(Boolean);
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-const getAvailableKey = () => {
-  const apiKeys = getApiKeys();
-  const now = Date.now();
-  let bestKey = null;
-  let bestScore = Infinity;
-
-  for (const key of apiKeys) {
-    const state = keyState.get(key);
-    if (!state) {
-      const score = keyUsage.get(key) || 0;
-      if (score < bestScore) { bestScore = score; bestKey = key; }
-      continue;
-    }
-    if (now < state.blockedUntil) continue;
-    if (state.concurrent >= MAX_CONCURRENT_PER_KEY) continue;
-    const score = keyUsage.get(key) || 0;
-    if (score < bestScore) { bestScore = score; bestKey = key; }
-  }
-
-  if (bestKey) return bestKey;
-
-  // Fallback: pick the key closest to unblocking
-  let soonest = Infinity;
-  for (const key of apiKeys) {
-    const state = keyState.get(key);
-    if (state && state.blockedUntil < soonest) {
-      soonest = state.blockedUntil;
-      bestKey = key;
-    }
-  }
-  return bestKey;
-};
-
-const keyUsage = new Map();
-
-const markKeyUsed = (key) => {
-  keyUsage.set(key, (keyUsage.get(key) || 0) + 1);
-};
-
-const blockKey = (key, duration = KEY_COOLDOWN_MS) => {
-  const state = keyState.get(key) || { concurrent: 0 };
-  keyState.set(key, {
-    blockedUntil: Date.now() + duration,
-    concurrent: state.concurrent,
-  });
-};
-
-const acquireKey = (key) => {
-  const state = keyState.get(key) || { concurrent: 0, blockedUntil: 0 };
-  state.concurrent = (state.concurrent || 0) + 1;
-  keyState.set(key, state);
-};
-
-const releaseKey = (key) => {
-  const state = keyState.get(key);
-  if (state) {
-    state.concurrent = Math.max(0, (state.concurrent || 1) - 1);
-    keyState.set(key, state);
-  }
-};
-
 const getAstroData = async (
   user,
   endpoint,
@@ -266,27 +207,8 @@ const getAstroData = async (
   force = false,
 ) => {
   const ONE_DAY = 24 * 60 * 60 * 1000;
-  console.log({ force, user });
-  // 🔧 0. Check Cache for per-user data types
-  if (
-    !force &&
-    user?.id &&
-    ['extended', 'natal', 'dashaInfo', 'mahaDashas'].includes(type)
-  ) {
-    try {
-      const existing = await prisma.astrologyData.findUnique({
-        where: { userId: user.id },
-      });
-      if (existing?.[type]) {
-        console.log(`✅ Returning cached ${type} for user ${user.id}`);
-        return existing[type];
-      }
-    } catch (err) {
-      console.log(`Cache check failed for ${type}, fetching fresh...`);
-    }
-  }
 
-  // 🚀 1. Check Global Transit Cache
+  // 🚀 1. Check Global Transit Cache (shared across all users in a timezone)
   if (!force && type === 'transit') {
     const timezone = user.timezone || '5.5';
     try {
@@ -306,125 +228,63 @@ const getAstroData = async (
   }
 
   // 🔧 2. Prepare payload
-  const dateToUse = useCurrentTime ? new Date() : new Date(user.birthDate);
-  const [hours, minutes] = useCurrentTime
-    ? [dateToUse.getHours(), dateToUse.getMinutes()]
-    : (user.birthTime || '12:00').split(':').map(Number);
+  // Components are the user's LOCAL wall-clock; buildPayload() subtracts the UTC offset
+  // to produce the UT1 Julian Day XALEN expects.
+  const timezone = parseFloat(user.timezone || '5.5');
+  let payload;
+  if (useCurrentTime) {
+    // Transit: user's local wall-clock now (shift now by the user's offset, read as UTC)
+    const localNow = new Date(Date.now() + timezone * 3600000);
+    payload = {
+      year: localNow.getUTCFullYear(),
+      month: localNow.getUTCMonth() + 1,
+      date: localNow.getUTCDate(),
+      hours: localNow.getUTCHours(),
+      minutes: localNow.getUTCMinutes(),
+      seconds: localNow.getUTCSeconds(),
+      latitude: user.latitude,
+      longitude: user.longitude,
+      timezone,
+    };
+  } else {
+    const birth = new Date(user.birthDate);
+    const [birthHour, birthMinute] = (user.birthTime || '12:00').split(':').map(Number);
+    payload = {
+      year: birth.getUTCFullYear(),
+      month: birth.getUTCMonth() + 1,
+      date: birth.getUTCDate(),
+      hours: birthHour,
+      minutes: birthMinute || 0,
+      seconds: 0,
+      latitude: user.latitude,
+      longitude: user.longitude,
+      timezone,
+    };
+  }
 
-  const payload = {
-    year: dateToUse.getFullYear(),
-    month: dateToUse.getMonth() + 1,
-    date: dateToUse.getDate(),
-    hours: hours,
-    minutes: minutes || 0,
-    seconds: dateToUse.getSeconds() || 0,
-    latitude: user.latitude,
-    longitude: user.longitude,
-    timezone: parseFloat(user.timezone || '5.5'),
-    config: {
-      observation_point: 'topocentric',
-      ayanamsha: 'lahiri',
-    },
-  };
+  let processedData;
 
-  let response;
-  let lastError = null;
-
-  // 🔁 API Key Rotation + Retry with Backoff
-  const maxAttempts = getApiKeys().length * 3;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const key = getAvailableKey();
-    if (!key) {
-      await sleep(1000);
-      lastError = { message: 'All keys blocked, waiting...' };
-      continue;
+  try {
+    if (type === 'mahaDashas') {
+      processedData = await xalen.fetchVimsottariDashas(payload);
+    } else if (type === 'transit') {
+      const result = await xalen.fetchPlanetsExtended(payload);
+      processedData = xalen.toPlanetMap(result.output);
+    } else if (type === 'navamsa') {
+      const result = await xalen.fetchNavamsa(payload);
+      processedData = xalen.toPlanetMap(result.output);
+    } else if (['planets', 'extended', 'natal'].includes(type)) {
+      const result = await xalen.fetchPlanetsExtended(payload);
+      processedData = xalen.toPlanetMap(result.output);
+    } else {
+      throw new Error(`Unknown astrology data type: ${type}`);
     }
-
-    acquireKey(key);
-    markKeyUsed(key);
-    console.log(`[${attempt + 1}/${maxAttempts}] Using key for ${endpoint}`);
-
-    try {
-      response = await fetch(
-        `https://json.freeastrologyapi.com/${endpoint}`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': key,
-          },
-          body: JSON.stringify(payload),
-        },
-      );
-
-      if (response.ok) {
-        lastError = null;
-        break;
-      }
-
-      const errorBody = await response.json().catch(() => ({}));
-      lastError = errorBody;
-
-      if (response.status === 429) {
-        blockKey(key);
-        console.warn(`⚠️  Key 429'd, cooldown ${KEY_COOLDOWN_MS}ms`);
-        await sleep(500);
-      } else {
-        console.error(`Key failed: ${response.status}`);
-      }
-    } catch (err) {
-      lastError = { message: err.message };
-      console.error(`Key error: ${err.message}`);
-    } finally {
-      releaseKey(key);
-    }
+  } catch (err) {
+    console.error(`Astro API error for ${type}:`, err.message);
+    throw new Error(`Astro API error: ${err.message}`);
   }
 
-  if (!response || !response.ok) {
-    throw new Error(
-      `Astro API error: ${response?.statusText || 'All keys exhausted'}`,
-    );
-  }
-
-  // ✅ 3. Data Transformation Logic
-  const data = await response.json();
-  let processedData = data;
-
-  // Transform Vimsottari Dashas
-  if (data?.output && type === 'mahaDashas') {
-    const rawDashas =
-      typeof data.output === 'string' ? JSON.parse(data.output) : data.output;
-    processedData = Object.entries(rawDashas).map(([mahaName, antarObj]) => {
-      const antarDashas = Object.entries(antarObj).map(
-        ([antarName, times]) => ({
-          dasha: antarName,
-          start_date: times.start_time,
-          end_date: times.end_time,
-        }),
-      );
-      return {
-        dasha: mahaName,
-        start_date: antarDashas[0]?.start_date || '',
-        end_date: antarDashas[antarDashas.length - 1]?.end_date || '',
-        antar_dashas: antarDashas,
-      };
-    });
-  }
-  // Handle Transit or DashaInfo
-  else if (data?.output && (type === 'dashaInfo' || type === 'transit')) {
-    processedData =
-      typeof data.output === 'string' ? JSON.parse(data.output) : data.output;
-  }
-  // Transform Planet Lists into Named Maps
-  else if (
-    data?.output &&
-    ['planets', 'extended', 'natal', 'navamsa'].includes(type)
-  ) {
-    processedData = toPlanetMap(data.output);
-  }
-
-  // 🚀 4. Special Case: Update Global Transit Cache
-  // We do this here because Transits are shared across ALL users in a timezone
+  // 🚀 3. Update Global Transit Cache (shared across timezone)
   if (type === 'transit') {
     const timezone = user.timezone || '5.5';
     await prisma.transitCache.upsert({
@@ -434,24 +294,10 @@ const getAstroData = async (
     });
   }
 
-  // 💾 5. Save per-user cached data (natal, dashaInfo, mahaDashas)
-  if (user?.id && ['natal', 'dashaInfo', 'mahaDashas'].includes(type)) {
-    try {
-      await prisma.astrologyData.upsert({
-        where: { userId: user.id },
-        update: { [type]: processedData },
-        create: { userId: user.id, [type]: processedData },
-      });
-      console.log(`✅ Cached ${type} for user ${user.id}`);
-    } catch (err) {
-      console.error(`Failed to cache ${type}:`, err.message);
-    }
-  }
-
   return processedData;
 };
 
-app.get('/api/astrology/planets', getUser, async (req, res) => {
+app.get('/api/astrology/planets', withProfile, async (req, res) => {
   const user = req.user;
   if (!user.birthDate || user.latitude === undefined) {
     return res.status(400).json({ error: 'User birth details missing' });
@@ -459,36 +305,40 @@ app.get('/api/astrology/planets', getUser, async (req, res) => {
 
   try {
     // Check DB first
-    const existing = await prisma.astrologyData.findUnique({
+    const existing = user?._skipAstroCache ? null : await prisma.astrologyData.findUnique({
       where: { userId: user.id },
     });
     if (existing?.planets) {
       console.log('✅ DB: Fetched data for planets');
-      return res.json(existing.planets.output[1]);
+      return res.json(existing.planets);
     }
     console.log('↻ API: Fetching new data for planets');
     const data = await getAstroData(user, 'planets', 'planets');
     console.log('✅ API: Fetched new data for planets');
 
-    res.json(data.output[1]);
+    await prisma.astrologyData.upsert({
+      where: { userId: user.id },
+      update: { planets: data },
+      create: { userId: user.id, planets: data },
+    }).catch(() => {});
+
+    res.json(data);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-app.get('/api/astrology/planets-extended', getUser, async (req, res) => {
+app.get('/api/astrology/planets-extended', withProfile, async (req, res) => {
   const user = req.user;
-  console.log({ planetUser: user });
 
   if (!user.birthDate || user.latitude === undefined) {
     return res.status(400).json({ error: 'User birth details missing' });
   }
 
   try {
-    const existing = await prisma.astrologyData.findUnique({
+    const existing = user?._skipAstroCache ? null : await prisma.astrologyData.findUnique({
       where: { userId: user.id },
     });
-    console.log({ existing: existing });
 
     if (existing?.extended) {
       console.log('✅ DB: Fetched data for extended');
@@ -497,13 +347,13 @@ app.get('/api/astrology/planets-extended', getUser, async (req, res) => {
     console.log('↻ API: Fetching new data for extended');
     const data = await getAstroData(user, 'planets/extended', 'extended');
     console.log('✅ API: Fetched new data for extended');
-    res.json(data.output);
+    res.json(data);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-app.get('/api/astrology/natal-chart', getUser, async (req, res) => {
+app.get('/api/astrology/natal-chart', withProfile, async (req, res) => {
   const user = req.user;
   const force = req.query.force === 'true';
   if (
@@ -521,7 +371,7 @@ app.get('/api/astrology/natal-chart', getUser, async (req, res) => {
   }
 });
 
-app.get('/api/astrology/d9-chart', getUser, async (req, res) => {
+app.get('/api/astrology/d9-chart', withProfile, async (req, res) => {
   const user = req.user;
   if (
     !user.birthDate ||
@@ -531,7 +381,7 @@ app.get('/api/astrology/d9-chart', getUser, async (req, res) => {
     return res.status(400).json({ error: 'User birth details missing' });
   }
   try {
-    const existing = await prisma.astrologyData.findUnique({
+    const existing = user?._skipAstroCache ? null : await prisma.astrologyData.findUnique({
       where: { userId: user.id },
     });
     if (existing?.navamsa) {
@@ -546,7 +396,7 @@ app.get('/api/astrology/d9-chart', getUser, async (req, res) => {
   }
 });
 
-app.get('/api/astrology/panchang', getUser, async (req, res) => {
+app.get('/api/astrology/panchang', withProfile, async (req, res) => {
   const user = req.user;
   if (
     !user.birthDate ||
@@ -556,56 +406,47 @@ app.get('/api/astrology/panchang', getUser, async (req, res) => {
     return res.status(400).json({ error: 'User birth details missing' });
   }
   try {
-    const existing = await prisma.astrologyData.findUnique({
+    const existing = user?._skipAstroCache ? null : await prisma.astrologyData.findUnique({
       where: { userId: user.id },
     });
     if (existing?.panchang) return res.json(existing.panchang);
 
-    const panchangEndpoints = [
-      'tithi-durations',
-      'nakshatra-durations',
-      'yoga-durations',
-      'karana-durations',
-      'sunrise-sunset-times',
-      'vedic-weekday',
-    ];
-
-    const panchangPromises = panchangEndpoints.map((endpoint) =>
-      getAstroData(user, endpoint),
-    );
-    const [tithi, nakshatra, yoga, karana, sun, weekday] =
-      await Promise.all(panchangPromises);
-
-    const aggregatedPanchang = {
-      tithi,
-      nakshatra,
-      yoga,
-      karana,
-      sun_rise: sun.sun_rise,
-      sun_set: sun.sun_set,
-      weekday,
+    const birth = new Date(user.birthDate);
+    const [birthHour, birthMinute] = (user.birthTime || '12:00').split(':').map(Number);
+    const payload = {
+      year: birth.getUTCFullYear(),
+      month: birth.getUTCMonth() + 1,
+      date: birth.getUTCDate(),
+      hours: birthHour,
+      minutes: birthMinute || 0,
+      seconds: 0,
+      latitude: user.latitude,
+      longitude: user.longitude,
+      timezone: parseFloat(user.timezone || '5.5'),
     };
+
+    const panchang = await xalen.fetchPanchang(payload);
 
     await prisma.astrologyData.upsert({
       where: { userId: user.id },
-      update: { panchang: aggregatedPanchang },
-      create: { userId: user.id, panchang: aggregatedPanchang },
+      update: { panchang },
+      create: { userId: user.id, panchang },
     });
 
-    res.json(aggregatedPanchang);
+    res.json(panchang);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-app.get('/api/astrology/highlights', getUser, async (req, res) => {
+app.get('/api/astrology/highlights', withProfile, async (req, res) => {
   const user = req.user;
   if (!user.birthDate || user.latitude === undefined) {
     return res.status(400).json({ error: 'User birth details missing' });
   }
 
   try {
-    const existing = await prisma.astrologyData.findUnique({
+    const existing = user?._skipAstroCache ? null : await prisma.astrologyData.findUnique({
       where: { userId: user.id },
     });
 
@@ -757,7 +598,7 @@ app.get('/api/astrology/highlights', getUser, async (req, res) => {
   }
 });
 
-app.get('/api/astrology/transit', getUser, async (req, res) => {
+app.get('/api/astrology/transit', withProfile, async (req, res) => {
   const user = req.user;
   if (!user.latitude || user.longitude === undefined) {
     return res.status(400).json({ error: 'User location details missing' });
@@ -803,21 +644,19 @@ app.get('/api/astrology/transit', getUser, async (req, res) => {
   }
 });
 
+// Convert various raw data formats into a named planet map with all derived fields
 const toPlanetMap = (output) => {
-  const rawData = Array.isArray(output)
-    ? output[1] && !Array.isArray(output[1])
+  if (Array.isArray(output)) {
+    // Old format: [index, {PlanetName: {properties}}] or direct array of entries
+    const isOldFormat = output[1] && !Array.isArray(output[1]) && !output[0]?.name && !output[0]?.planetName;
+    const rawData = isOldFormat
       ? Object.entries(output[1]).map(([name, val]) => ({ name, ...val }))
-      : output
-    : Object.values(output);
-  const namedMap = {};
-  rawData.forEach((item) => {
-    const name = item?.name || item?.localized_name || item?.planet?.en;
-    if (name) {
-      const { name: _n, ...details } = item;
-      namedMap[name] = details;
-    }
-  });
-  return namedMap;
+      : output;
+    return xalen.toPlanetMap(rawData);
+  }
+  return xalen.toPlanetMap(
+    Object.entries(output).map(([name, val]) => ({ name, ...val })),
+  );
 };
 
 const shiftChartRelativeTo = (transitData, referenceSign) => {
@@ -840,7 +679,7 @@ const shiftChartRelativeTo = (transitData, referenceSign) => {
   return result;
 };
 
-app.get('/api/astrology/my-transit', getUser, async (req, res) => {
+app.get('/api/astrology/my-transit', withProfile, async (req, res) => {
   const user = req.user;
 
   if (user.latitude == null || user.longitude == null) {
@@ -851,7 +690,7 @@ app.get('/api/astrology/my-transit', getUser, async (req, res) => {
   const force = req.query.force === 'true';
 
   try {
-    const cachedTransit = await prisma.astrologyData.findUnique({
+    const cachedTransit = user?._skipAstroCache ? null : await prisma.astrologyData.findUnique({
       where: { userId: user.id },
     });
 
@@ -916,7 +755,7 @@ app.get('/api/astrology/my-transit', getUser, async (req, res) => {
   }
 });
 
-app.get('/api/astrology/lagna-gochar', getUser, async (req, res) => {
+app.get('/api/astrology/lagna-gochar', withProfile, async (req, res) => {
   const user = req.user;
   if (user.latitude == null || user.longitude == null) {
     return res.status(400).json({ error: 'User location details missing' });
@@ -924,7 +763,7 @@ app.get('/api/astrology/lagna-gochar', getUser, async (req, res) => {
 
   const force = req.query.force === 'true';
   try {
-    const cached = await prisma.astrologyData.findUnique({
+    const cached = user?._skipAstroCache ? null : await prisma.astrologyData.findUnique({
       where: { userId: user.id },
     });
 
@@ -984,7 +823,7 @@ app.get('/api/astrology/lagna-gochar', getUser, async (req, res) => {
   }
 });
 
-app.get('/api/astrology/chandra-gochar', getUser, async (req, res) => {
+app.get('/api/astrology/chandra-gochar', withProfile, async (req, res) => {
   const user = req.user;
   if (user.latitude == null || user.longitude == null) {
     return res.status(400).json({ error: 'User location details missing' });
@@ -992,7 +831,7 @@ app.get('/api/astrology/chandra-gochar', getUser, async (req, res) => {
 
   const force = req.query.force === 'true';
   try {
-    const cached = await prisma.astrologyData.findUnique({
+    const cached = user?._skipAstroCache ? null : await prisma.astrologyData.findUnique({
       where: { userId: user.id },
     });
 
@@ -1052,7 +891,7 @@ app.get('/api/astrology/chandra-gochar', getUser, async (req, res) => {
   }
 });
 
-app.get('/api/astrology/all-transit', getUser, async (req, res) => {
+app.get('/api/astrology/all-transit', withProfile, async (req, res) => {
   const user = req.user;
   if (user.latitude == null || user.longitude == null) {
     return res.status(400).json({ error: 'User location details missing' });
@@ -1081,9 +920,12 @@ app.get('/api/astrology/all-transit', getUser, async (req, res) => {
       });
     }
 
-    const cachedUser = await prisma.astrologyData.findUnique({
+    const cachedUser = user?._skipAstroCache ? null : await prisma.astrologyData.findUnique({
       where: { userId: user.id },
     });
+
+    // Always normalize transit into the named-map shape the frontend expects
+    const transitMap = toPlanetMap(transitData?.output || transitData);
 
     // Check if all cached user transit data is still fresh
     if (!force && cachedUser?.lagnaGochar && cachedUser?.chandraGochar && cachedUser?.myTransit &&
@@ -1094,7 +936,7 @@ app.get('/api/astrology/all-transit', getUser, async (req, res) => {
         Date.now() - new Date(cachedUser.lagnaGocharUpdatedAt).getTime() < ONE_DAY) {
       console.log('✅ Returning all cached user transit data');
       return res.json({
-        transit: transitData,
+        transit: transitMap,
         myTransit: cachedUser.myTransit,
         lagnaGochar: cachedUser.lagnaGochar,
         chandraGochar: cachedUser.chandraGochar,
@@ -1102,8 +944,7 @@ app.get('/api/astrology/all-transit', getUser, async (req, res) => {
     }
 
     const natalData = await getAstroData(user, 'planets/extended', 'natal', false);
-
-    const planetMap = toPlanetMap(transitData?.output || transitData);
+    const planetMap = transitMap;
 
     // lagnaGochar = transit relative to natal Ascendant (same as myTransit)
     const natalAscSign = natalData?.Ascendant?.current_sign;
@@ -1139,7 +980,7 @@ app.get('/api/astrology/all-transit', getUser, async (req, res) => {
     });
 
     return res.json({
-      transit: transitData,
+      transit: transitMap,
       myTransit,
       lagnaGochar,
       chandraGochar,
@@ -1150,13 +991,13 @@ app.get('/api/astrology/all-transit', getUser, async (req, res) => {
   }
 });
 
-app.get('/api/astrology/yogini-dasha', getUser, async (req, res) => {
+app.get('/api/astrology/yogini-dasha', withProfile, async (req, res) => {
   const user = req.user;
   if (!user.birthDate || user.latitude === undefined) {
     return res.status(400).json({ error: 'User birth details missing' });
   }
   try {
-    const existing = await prisma.astrologyData.findUnique({
+    const existing = user?._skipAstroCache ? null : await prisma.astrologyData.findUnique({
       where: { userId: user.id },
     });
     if (existing?.yoginiDasha) return res.json(existing.yoginiDasha);
@@ -1175,7 +1016,7 @@ app.get('/api/astrology/yogini-dasha', getUser, async (req, res) => {
   }
 });
 
-app.get('/api/astrology/dasha-info', getUser, async (req, res) => {
+app.get('/api/astrology/dasha-info', withProfile, async (req, res) => {
   const user = req.user;
   const force = req.query.force === 'true';
   if (!user.birthDate || user.latitude === undefined) {
@@ -1195,7 +1036,7 @@ app.get('/api/astrology/dasha-info', getUser, async (req, res) => {
   }
 });
 
-app.get('/api/astrology/maha-dashas', getUser, async (req, res) => {
+app.get('/api/astrology/maha-dashas', withProfile, async (req, res) => {
   const user = req.user;
   const force = req.query.force === 'true';
   if (!user.birthDate || user.latitude === undefined) {
@@ -1281,6 +1122,294 @@ app.post('/api/user/claim-coins', getUser, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+// ─── Profile Endpoints ──────────────────────────────────────────────
+
+app.get('/api/user/profiles', getUser, async (req, res) => {
+  try {
+    let profiles = await prisma.profile.findMany({
+      where: { userId: req.user.id },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (profiles.length === 0) {
+      const defaultProfile = await prisma.profile.create({
+        data: {
+          userId: req.user.id,
+          name: req.user.name || 'Me',
+          relation: 'self',
+          birthDate: req.user.birthDate,
+          birthTime: req.user.birthTime,
+          location: req.user.location,
+          latitude: req.user.latitude,
+          longitude: req.user.longitude,
+          timezone: req.user.timezone,
+        },
+      });
+      profiles = [defaultProfile];
+    }
+    res.json(profiles);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/user/profiles', getUser, async (req, res) => {
+  try {
+    const { name, relation, avatar, color, birthDate, birthTime, location, latitude, longitude, timezone } = req.body;
+    if (!name) return res.status(400).json({ error: 'name is required' });
+    const profile = await prisma.profile.create({
+      data: {
+        userId: req.user.id,
+        name,
+        relation: relation || 'friend',
+        avatar: avatar || 'cat',
+        color: color || 'indigo',
+        birthDate: birthDate ? new Date(birthDate) : null,
+        birthTime: birthTime || null,
+        location: location || null,
+        latitude: latitude ? parseFloat(latitude) : null,
+        longitude: longitude ? parseFloat(longitude) : null,
+        timezone: timezone || null,
+      },
+    });
+    res.status(201).json(profile);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/user/profiles/:id', getUser, async (req, res) => {
+  try {
+    const existing = await prisma.profile.findFirst({
+      where: { id: req.params.id, userId: req.user.id },
+    });
+    if (!existing) return res.status(404).json({ error: 'Profile not found' });
+    const { name, relation, avatar, color, birthDate, birthTime, location, latitude, longitude, timezone } = req.body;
+    const profile = await prisma.profile.update({
+      where: { id: req.params.id },
+      data: {
+        name: name || undefined,
+        relation: relation || undefined,
+        avatar: avatar || undefined,
+        color: color || undefined,
+        birthDate: birthDate ? new Date(birthDate) : birthDate === null ? null : undefined,
+        birthTime: birthTime !== undefined ? birthTime : undefined,
+        location: location !== undefined ? location : undefined,
+        latitude: latitude !== undefined ? parseFloat(latitude) : undefined,
+        longitude: longitude !== undefined ? parseFloat(longitude) : undefined,
+        timezone: timezone !== undefined ? timezone : undefined,
+      },
+    });
+    res.json(profile);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/user/profiles/:id', getUser, async (req, res) => {
+  try {
+    const existing = await prisma.profile.findFirst({
+      where: { id: req.params.id, userId: req.user.id },
+    });
+    if (!existing) return res.status(404).json({ error: 'Profile not found' });
+    if (existing.relation === 'self') {
+      return res.status(400).json({ error: 'Cannot delete your main profile' });
+    }
+    await prisma.profile.delete({ where: { id: req.params.id } });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── Remedy Endpoints ────────────────────────────────────────────────
+
+app.get('/api/user/remedies', getUser, async (req, res) => {
+  try {
+    const remedies = await prisma.remedy.findMany({
+      where: { userId: req.user.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(remedies);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/user/remedies', getUser, async (req, res) => {
+  try {
+    const { type, title, description, source, sourceRef } = req.body;
+    if (!type || !title || !description) {
+      return res.status(400).json({ error: 'type, title, and description are required' });
+    }
+    const remedy = await prisma.remedy.create({
+      data: {
+        userId: req.user.id,
+        type,
+        title,
+        description,
+        source: source || 'manual',
+        sourceRef: sourceRef || null,
+      },
+    });
+    res.status(201).json(remedy);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.patch('/api/user/remedies/:id/toggle', getUser, async (req, res) => {
+  try {
+    const remedy = await prisma.remedy.findFirst({
+      where: { id: req.params.id, userId: req.user.id },
+    });
+    if (!remedy) {
+      return res.status(404).json({ error: 'Remedy not found' });
+    }
+    const updated = await prisma.remedy.update({
+      where: { id: req.params.id },
+      data: { completed: !remedy.completed },
+    });
+    res.json(updated);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/user/remedies/:id', getUser, async (req, res) => {
+  try {
+    const remedy = await prisma.remedy.findFirst({
+      where: { id: req.params.id, userId: req.user.id },
+    });
+    if (!remedy) {
+      return res.status(404).json({ error: 'Remedy not found' });
+    }
+    await prisma.remedy.delete({ where: { id: req.params.id } });
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/user/remedies/scan', getUser, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const existing = await prisma.remedy.findMany({
+      where: { userId },
+      select: { title: true },
+    });
+    const existingTitles = new Set(existing.map(r => r.title.toLowerCase().trim()));
+    const found = [];
+
+    // Scan transit predictions
+    const ad = await prisma.astrologyData.findUnique({
+      where: { userId },
+      select: { transitPredictions: true },
+    });
+    if (ad?.transitPredictions) {
+      for (const [key, tp] of Object.entries(ad.transitPredictions)) {
+        const entry = tp;
+        if (entry.remedy && entry.remedy !== 'None needed' && entry.remedy !== 'None') {
+          const title = extractRemedyTitle(entry.remedy);
+          if (!existingTitles.has(title.toLowerCase().trim())) {
+            const created = await prisma.remedy.create({
+              data: { userId, type: inferRemedyType(entry.remedy), title, description: entry.remedy, source: 'transit_prediction', sourceRef: key },
+            });
+            found.push(created);
+            existingTitles.add(title.toLowerCase().trim());
+          }
+        }
+      }
+    }
+
+    // Scan chat messages
+    const messages = await prisma.message.findMany({
+      where: { conversation: { userId }, role: 'assistant' },
+      select: { id: true, content: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    for (const msg of messages) {
+      const remedies = parseRemediesFromText(msg.content);
+      for (const r of remedies) {
+        if (!existingTitles.has(r.title.toLowerCase().trim())) {
+          const created = await prisma.remedy.create({
+            data: { userId, type: r.type, title: r.title, description: r.description, source: 'ai_chat', sourceRef: msg.id },
+          });
+          found.push(created);
+          existingTitles.add(r.title.toLowerCase().trim());
+        }
+      }
+    }
+
+    res.json({ scanned: true, found: found.length, remedies: found });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+function extractRemedyTitle(text) {
+  const clean = text.replace(/^[-•*]\s*/, '').trim();
+  const firstSentence = clean.split(/[.!]/)[0].trim();
+  return firstSentence.length > 80 ? firstSentence.slice(0, 77) + '...' : firstSentence;
+}
+
+function inferRemedyType(text) {
+  const lower = text.toLowerCase();
+  if (lower.includes('mantra') || lower.includes('chant') || lower.includes('om ') || lower.includes('namah')) return 'mantra';
+  if (lower.includes('gemstone') || lower.includes('sapphire') || lower.includes('ruby') || lower.includes('pearl') || lower.includes('coral') || lower.includes('emerald') || lower.includes('diamond') || lower.includes('stone') || lower.includes('wear')) return 'gemstone';
+  if (lower.includes('donate') || lower.includes('charity') || lower.includes('give ') || lower.includes('feed')) return 'charity';
+  if (lower.includes('fast') || lower.includes('diet') || lower.includes('exercise') || lower.includes('routine') || lower.includes('sleep')) return 'lifestyle';
+  return 'ritual';
+}
+
+function parseRemediesFromText(text) {
+  const results = [];
+
+  // Format 1: HTML <ul> with remedy list items
+  const ulRegex = /<ul[^>]*>([\s\S]*?)<\/ul>/gi;
+  let ulMatch;
+  while ((ulMatch = ulRegex.exec(text)) !== null) {
+    const liRegex = /<li[^>]*>([\s\S]*?)<\/li>/gi;
+    let liMatch;
+    while ((liMatch = liRegex.exec(ulMatch[1])) !== null) {
+      const content = liMatch[1].replace(/<[^>]*>/g, '').trim();
+      if (content && content.length > 5 && !content.toLowerCase().includes('remed')) {
+        results.push({ title: extractRemedyTitle(content), description: content, type: inferRemedyType(content) });
+      }
+    }
+  }
+
+  // Format 2: Bold labels
+  const labelRegex = /\*\*(?:Recommended Remedies|Lal Kitab Remedies|Mantras?)\*\*:\s*([\s\S]*?)(?=\n\*\*|$)/gi;
+  let labelMatch;
+  while ((labelMatch = labelRegex.exec(text)) !== null) {
+    const content = labelMatch[1].replace(/<[^>]*>/g, '').trim();
+    if (content && content.length > 5) {
+      const items = content.split(/[.;]\s+/).filter(s => s.trim().length > 5);
+      for (const item of items) {
+        const clean = item.trim();
+        results.push({ title: extractRemedyTitle(clean), description: clean, type: inferRemedyType(clean) });
+      }
+    }
+  }
+
+  // Format 3: Plain "Remedy:" prefix
+  const plainRegex = /(?:^|\n)\s*(?:Remed(?:y|ies))\s*:\s*([\s\S]*?)(?=\n\s*(?:\w+)\s*:|$)/gi;
+  let plainMatch;
+  while ((plainMatch = plainRegex.exec(text)) !== null) {
+    const content = plainMatch[1].replace(/<[^>]*>/g, '').trim();
+    if (content && content.length > 5 && !content.toLowerCase().includes('none')) {
+      const items = content.split(/[.;]\s+/).filter(s => s.trim().length > 5);
+      for (const item of items) {
+        const clean = item.trim();
+        results.push({ title: extractRemedyTitle(clean), description: clean, type: inferRemedyType(clean) });
+      }
+    }
+  }
+
+  return results;
+}
 
 function optimizeAstroData(raw) {
   const getPlanet = (p) => ({
@@ -1383,7 +1512,7 @@ function optimizeAstroData(raw) {
   };
 }
 
-app.get('/api/astrology/summary', getUser, async (req, res) => {
+app.get('/api/astrology/summary', withProfile, async (req, res) => {
   const user = req.user;
   if (!user.birthDate || user.latitude === undefined) {
     return res.status(400).json({ error: 'User birth details missing' });
@@ -1422,7 +1551,7 @@ app.get('/api/astrology/summary', getUser, async (req, res) => {
 
     // 3. Fetch Yogini Dashas and identify active
     let yoginiDashas;
-    const existingData = await prisma.astrologyData.findUnique({
+    const existingData = user?._skipAstroCache ? null : await prisma.astrologyData.findUnique({
       where: { userId: user.id },
     });
 
@@ -1541,9 +1670,11 @@ app.get('/api/astrology/summary', getUser, async (req, res) => {
 
 // Helper to prepare data for AI
 const prepareAstroRawData = async (user) => {
-  const currentUser = await prisma.user.findUnique({
-    where: { id: user.id },
-  });
+  const currentUser = user?._skipAstroCache
+    ? user
+    : await prisma.user.findUnique({
+        where: { id: user.id },
+      });
   if (!currentUser) throw new Error('User not found');
 
   // Fetch global transit cache (same for all users in same timezone)
@@ -1572,23 +1703,27 @@ const prepareAstroRawData = async (user) => {
   ]);
 
   // Save fetched data to DB for other endpoints that use it
-  const existing = await prisma.astrologyData.findUnique({
-    where: { userId: currentUser.id },
-  });
-  await prisma.astrologyData.upsert({
-    where: { userId: currentUser.id },
-    update: {
-      extended: natal,
-      mahaDashas: mahaDashas,
-      yoginiDasha: yoginiDashas,
-    },
-    create: {
-      userId: currentUser.id,
-      extended: natal,
-      mahaDashas: mahaDashas,
-      yoginiDasha: yoginiDashas,
-    },
-  });
+  const existing = user?._skipAstroCache
+    ? null
+    : await prisma.astrologyData.findUnique({
+        where: { userId: currentUser.id },
+      });
+  if (!user?._skipAstroCache) {
+    await prisma.astrologyData.upsert({
+      where: { userId: currentUser.id },
+      update: {
+        extended: natal,
+        mahaDashas: mahaDashas,
+        yoginiDasha: yoginiDashas,
+      },
+      create: {
+        userId: currentUser.id,
+        extended: natal,
+        mahaDashas: mahaDashas,
+        yoginiDasha: yoginiDashas,
+      },
+    });
+  }
 
   // Helper for finding active dasha
   const findActive = (list, startKey, endKey) =>
@@ -1617,7 +1752,7 @@ const prepareAstroRawData = async (user) => {
   };
 };
 
-app.post('/api/astrology/ai-feed', getUser, async (req, res) => {
+app.post('/api/astrology/ai-feed', withProfile, async (req, res) => {
   const user = req.user;
   const { question } = req.body;
 
@@ -1675,13 +1810,11 @@ app.get('/api/ai/conversations/:id', getUser, async (req, res) => {
 });
 
 // AI Chat endpoint (consumes coins)
-app.post('/api/ai/chat', getUser, async (req, res) => {
+app.post('/api/ai/chat', withProfile, async (req, res) => {
   const { message, conversationId } = req.body;
 
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.id },
-    });
+    const user = req.user;
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -1828,15 +1961,13 @@ app.post('/api/ai/chat', getUser, async (req, res) => {
 });
 
 // AI Chat 2 endpoint (single-pass prompt)
-app.post('/api/ai/chat2', getUser, async (req, res) => {
+app.post('/api/ai/chat2', withProfile, async (req, res) => {
   const { message, conversationId } = req.body;
   console.log('--- AI Chat 2 Start ---');
   console.log('Message:', message);
 
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.id },
-    });
+    const user = req.user;
 
     if (!user) {
       console.log('❌ User not found');
@@ -1981,15 +2112,13 @@ app.post('/api/ai/chat2', getUser, async (req, res) => {
 });
 
 // AI Chat 5 endpoint (HTML Output)
-app.post('/api/ai/chat5', getUser, async (req, res) => {
+app.post('/api/ai/chat5', withProfile, async (req, res) => {
   const { message, conversationId } = req.body;
   console.log('--- AI Chat 5 Start ---');
   console.log('Message:', message);
 
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.id },
-    });
+    const user = req.user;
 
     if (!user) {
       console.log('❌ User not found');
@@ -2122,16 +2251,51 @@ app.post('/api/ai/chat5', getUser, async (req, res) => {
   }
 });
 
+// Knowledge search endpoint
+app.get('/api/knowledge/search', async (req, res) => {
+  try {
+    const { q } = req.query;
+    if (!q || q.length < 2) return res.json({ results: [] });
+
+    const terms = q.replace(/[^a-zA-Z0-9\s]/g, '').split(/\s+/).filter(Boolean);
+    if (terms.length === 0) return res.json({ results: [] });
+
+    const patterns = terms.map(t => `%${t}%`);
+    const tagPatterns = [...patterns];
+
+    const results = await prisma.$queryRaw`
+      SELECT id, source, chapter, title, content, tags
+      FROM knowledge_chunk
+      WHERE content ILIKE ANY(ARRAY[${patterns}])
+         OR tags ILIKE ANY(ARRAY[${tagPatterns}])
+      ORDER BY
+        CASE WHEN content ILIKE ALL(ARRAY[${patterns}]) THEN 1
+             WHEN title ILIKE ANY(ARRAY[${patterns}]) THEN 2
+             ELSE 3
+        END
+      LIMIT 8
+    `;
+
+    const serialized = results.map(r => ({
+      ...r,
+      content: r.content.length > 600 ? r.content.slice(0, 600) + '...' : r.content,
+    }));
+
+    res.json({ results: serialized });
+  } catch (error) {
+    console.error('Knowledge search error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // AI Chat 6 endpoint (Gemma/Google AI SDK - HTML Output)
-app.post('/api/ai/chat6', getUser, async (req, res) => {
+app.post('/api/ai/chat6', withProfile, async (req, res) => {
   const { message, conversationId } = req.body;
   console.log('--- AI Chat 6 (Gemma) Start ---');
   console.log('Message:', message);
 
   try {
-    const user = await prisma.user.findUnique({
-      where: { id: req.user.id },
-    });
+    const user = req.user;
 
     if (!user) {
       console.log('❌ User not found');
@@ -2189,11 +2353,40 @@ app.post('/api/ai/chat6', getUser, async (req, res) => {
     const rawData = await prepareAstroRawData(user);
     console.log('✅ Astrology Data fetched');
 
+    // Search Parasara knowledge base
+    let parasaraContext = '';
+    try {
+      const terms = message
+        .replace(/[^a-zA-Z0-9\s]/g, '')
+        .split(/\s+/)
+        .filter(w => w.length > 3)
+        .slice(0, 4);
+      if (terms.length > 0) {
+        const patterns = terms.map(t => `%${t}%`);
+        const chunks = await prisma.$queryRaw`
+          SELECT source, chapter, title, content, tags
+          FROM knowledge_chunk
+          WHERE content ILIKE ANY(ARRAY[${patterns}])
+             OR tags ILIKE ANY(ARRAY[${patterns}])
+          LIMIT 5
+        `;
+        if (chunks.length > 0) {
+          parasaraContext = chunks
+            .map(c => `[${c.source} | ${c.chapter} | ${c.title}]\n${c.content.length > 800 ? c.content.slice(0, 800) + '...' : c.content}`)
+            .join('\n\n---\n\n');
+          console.log(`📚 Parasara context: ${chunks.length} chunks`);
+        }
+      }
+    } catch (err) {
+      console.error('Parasara search error:', err);
+    }
+
     // Build Master Prompt V5
     const masterPrompt = await buildMasterPromptV5({
       question: message,
       memory: '',
       rawData,
+      parasaraContext,
     });
 
     let aiResponse = '';
@@ -2242,7 +2435,7 @@ app.get('/api/ai/persona', getUser, async (req, res) => {
     const user = req.user;
 
     // Check if persona already exists in AstrologyData
-    const existingData = await prisma.astrologyData.findUnique({
+    const existingData = user?._skipAstroCache ? null : await prisma.astrologyData.findUnique({
       where: { userId: user.id },
       select: { aiPersona: true },
     });
@@ -2420,6 +2613,11 @@ REMEDY:
   }
 });
 
-app.listen(port, () => {
-  console.log(`Server running on port ${port}: URL: http://localhost:${port}`);
+xalen.init().then(() => {
+  app.listen(port, () => {
+    console.log(`Server running on port ${port}: URL: http://localhost:${port}`);
+  });
+}).catch(err => {
+  console.error('Failed to initialize XALEN ephemeris:', err);
+  process.exit(1);
 });

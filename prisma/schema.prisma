@@ -29,6 +29,8 @@ model User {
   accounts      Account[]
   astrologyData AstrologyData?
   conversations Conversation[]
+  remedies      Remedy[]
+  profiles      Profile[]
 
   @@map("user")
 }
@@ -131,4 +133,54 @@ model TransitCache {
   timezone  String   @unique
   data      Json
   updatedAt DateTime @updatedAt
+}
+
+model Remedy {
+  id          String   @id @default(cuid())
+  userId      String
+  type        String   // "mantra" | "gemstone" | "ritual" | "charity" | "lifestyle"
+  title       String
+  description String   @db.Text
+  source      String   // "ai_chat" | "transit_prediction" | "manual"
+  sourceRef   String?  // message ID or transit date
+  completed   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("remedy")
+}
+
+model Profile {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  relation  String   @default("self")
+  avatar    String   @default("cat")
+  color     String   @default("indigo")
+  birthDate DateTime?
+  birthTime String?
+  location  String?
+  latitude  Float?
+  longitude Float?
+  timezone  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("profile")
+}
+
+model KnowledgeChunk {
+  id        String   @id @default(cuid())
+  source    String
+  chapter   String
+  title     String
+  content   String   @db.Text
+  tags      String?
+  createdAt DateTime @default(now())
+
+  @@index([source])
+  @@map("knowledge_chunk")
 }
