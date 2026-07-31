@@ -1,31 +1,27 @@
 import { PrismaClient } from '@prisma/client';
 import { readFileSync } from 'fs';
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
 
 const prisma = new PrismaClient();
 
-const SOURCES = [
-  {
-    path: '/Users/aayurtshrestha/Projects/supreme/googleDrive/brihatParasara/BRIHAT_PARASARA_HORA_SASTRA.md',
-    source: 'bphs_vol1',
-    headingPattern: /^##\s+(.+)$/gm,
-    subHeadingPattern: /^###\s+(.+)$/gm,
-    maxChunkSize: 2500,
-  },
-  {
-    path: '/Users/aayurtshrestha/Projects/supreme/googleDrive/brihatParasara/BRIHAT_PARASARA_HORA_SASTRA_VOL2.md',
-    source: 'bphs_vol2',
-    headingPattern: /^##\s+(.+)$/gm,
-    subHeadingPattern: /^###\s+(.+)$/gm,
-    maxChunkSize: 2500,
-  },
-  {
-    path: '/Users/aayurtshrestha/Projects/supreme/googleDrive/brihatParasara/brihat_prasara_online_sumaary.md',
-    source: 'bphs_online',
-    headingPattern: /^#\s+(.+)$/gm,
-    subHeadingPattern: /^##\s+(.+)$/gm,
-    maxChunkSize: 2500,
-  },
-];
+// Read knowledge source files from the manifest (astro-api/knowledge/manifest.json).
+// Adding a new MD: drop the file, add an entry here, and register its grouping
+// key in src/lib/knowledge-sources.js, then re-run this script.
+const manifest = JSON.parse(
+  readFileSync(
+    resolve(dirname(fileURLToPath(import.meta.url)), '../knowledge/manifest.json'),
+    'utf-8',
+  ),
+);
+
+const SOURCES = manifest.files.map(({ path, source, headingPattern, subHeadingPattern, maxChunkSize }) => ({
+  path,
+  source,
+  headingPattern: new RegExp(headingPattern, 'gm'),
+  subHeadingPattern: new RegExp(subHeadingPattern, 'gm'),
+  maxChunkSize,
+}));
 
 function stripCodeBlocks(text) {
   return text.replace(/```[\s\S]*?```/g, '').replace(/~~~[\s\S]*?~~~/g, '');
@@ -139,11 +135,15 @@ function generateTags(chapter, title, content) {
 }
 
 async function main() {
-  console.log('Seeding Brihat Parasara Hora Sastra knowledge base...');
+  console.log('Seeding knowledge bases from manifest...');
 
-  // Clear existing data
-  await prisma.knowledgeChunk.deleteMany();
-  console.log('Cleared existing knowledge chunks.');
+  // Only clear chunks belonging to sources present in this manifest so other
+  // knowledge bases are preserved.
+  const sourceKeys = SOURCES.map(s => s.source);
+  await prisma.knowledgeChunk.deleteMany({
+    where: { source: { in: sourceKeys } },
+  });
+  console.log(`Cleared existing chunks for sources: ${sourceKeys.join(', ')}`);
 
   let totalChunks = 0;
 

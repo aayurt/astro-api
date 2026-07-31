@@ -761,7 +761,7 @@ export async function buildMasterPromptV4({ question, memory, rawData }) {
   return prompt;
 }
 
-export async function buildMasterPromptV5({ question, memory, rawData, parasaraContext }) {
+export async function buildMasterPromptV5({ question, memory, rawData, parasaraContext, knowledgeLabel }) {
   console.log('🚀 Building Master Prompt V5 (HTML Output)...');
 
   // Reuse the logic from V4 for consistent enriched data
@@ -947,9 +947,12 @@ export async function buildMasterPromptV5({ question, memory, rawData, parasaraC
     // aiPersona: rawData.aiPersona,
   };
   // Replace placeholders in MASTER_PROMPT_TEMPLATE_HTML
+  const referenceIntro = knowledgeLabel
+    ? `\nReference knowledge base for this conversation: ${knowledgeLabel}.`
+    : '\nNo external Vedic text knowledge base is selected for this conversation; rely on the chart data and your general astrological knowledge.';
   const questionSection = parasaraContext
-    ? `## Vedic Text Reference\nQuote relevant verses from the Brihat Parasara Hora Sastra by chapter name when applicable. Here is relevant context:\n\n${parasaraContext}\n\n## User Question\n${question}`
-    : question;
+    ? `## Vedic Text Reference\nQuote relevant verses from ${knowledgeLabel || 'the reference text'} by chapter name when applicable. Here is relevant context:\n\n${parasaraContext}\n\n## User Question\n${question}`
+    : `${question}${referenceIntro}`;
 
   let prompt = MASTER_PROMPT_TEMPLATE_SOULFUL_HTML.replace(
     '{{payload}}',

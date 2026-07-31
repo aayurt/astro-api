@@ -13,6 +13,11 @@ import {
 } from './lib/ai-agent.js';
 import { getYoginiDasha } from './lib/astrology.js';
 import { auth } from './lib/auth.js';
+import {
+  KNOWLEDGE_SOURCES,
+  getSourceFilter,
+  getSourceLabel,
+} from './lib/knowledge-sources.js';
 import { askQwen as askQwenLib } from './lib/qwen.js';
 import { GeminiWebService } from './services/gemini.js';
 import { GemmaService } from './services/gemma.js';
@@ -1782,6 +1787,21 @@ app.post('/api/astrology/ai-feed', withProfile, async (req, res) => {
 });
 
 // AI Chat history endpoints
+app.get('/api/ai/knowledge-sources', getUser, async (req, res) => {
+  try {
+    const sources = [];
+    for (const [key, cfg] of Object.entries(KNOWLEDGE_SOURCES)) {
+      const count = await prisma.knowledgeChunk.count({
+        where: { source: { in: cfg.sources } },
+      });
+      if (count > 0) sources.push({ key, label: cfg.label });
+    }
+    res.json(sources);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.get('/api/ai/conversations', getUser, async (req, res) => {
   try {
     const conversations = await prisma.conversation.findMany({
@@ -2290,7 +2310,7 @@ app.get('/api/knowledge/search', async (req, res) => {
 
 // AI Chat 6 endpoint (Gemma/Google AI SDK - HTML Output)
 app.post('/api/ai/chat6', withProfile, async (req, res) => {
-  const { message, conversationId } = req.body;
+  const { message, conversationId, profileId, knowledgeSource } = req.body;
   console.log('--- AI Chat 6 (Gemma) Start ---');
   console.log('Message:', message);
 
@@ -2328,6 +2348,8 @@ app.post('/api/ai/chat6', withProfile, async (req, res) => {
         data: {
           userId: user.id,
           title: message.substring(0, 50),
+          profileId: profileId ?? null,
+          knowledgeSource: knowledgeSource ?? null,
         },
       });
       console.log('🆕 New conversation created:', conversation.id);
@@ -2337,6 +2359,18 @@ app.post('/api/ai/chat6', withProfile, async (req, res) => {
         data: { updatedAt: new Date() },
       });
       console.log('🔄 Existing conversation updated:', conversation.id);
+
+      // Lock the conversation to its chart: resolve the chart owner from the
+      // stored profileId regardless of the currently-active profile.
+      if (conversation.profileId && conversation.profileId !== profileId) {
+        const lockedProfile = await prisma.profile
+          .findFirst({ where: { id: conversation.profileId, userId: user.id } })
+          .catch(() => null);
+        if (lockedProfile) {
+          const { id, userId, createdAt, updatedAt, ...profileData } = lockedProfile;
+          req.user = { ...user, ...profileData, _skipAstroCache: true };
+        }
+      }
     }
 
     // Store user message
@@ -2348,12 +2382,14 @@ app.post('/api/ai/chat6', withProfile, async (req, res) => {
       },
     });
 
-    // Fetch Astrology Data
+    // Fetch Astrology Data (locked to the conversation's chart)
     console.log('🔭 Fetching Astrology Data...');
-    const rawData = await prepareAstroRawData(user);
+    const rawData = await prepareAstroRawData(req.user);
     console.log('✅ Astrology Data fetched');
 
-    // Search Parasara knowledge base
+    // Search the conversation's selected knowledge base
+    const knowledgeLabel = getSourceLabel(conversation.knowledgeSource);
+    const sourceFilter = getSourceFilter(conversation.knowledgeSource);
     let parasaraContext = '';
     try {
       const terms = message
@@ -2361,24 +2397,27 @@ app.post('/api/ai/chat6', withProfile, async (req, res) => {
         .split(/\s+/)
         .filter(w => w.length > 3)
         .slice(0, 4);
-      if (terms.length > 0) {
+      if (sourceFilter && terms.length > 0) {
         const patterns = terms.map(t => `%${t}%`);
         const chunks = await prisma.$queryRaw`
           SELECT source, chapter, title, content, tags
           FROM knowledge_chunk
-          WHERE content ILIKE ANY(ARRAY[${patterns}])
-             OR tags ILIKE ANY(ARRAY[${patterns}])
+          WHERE source = ANY(ARRAY[${sourceFilter}])
+            AND (content ILIKE ANY(ARRAY[${patterns}])
+             OR tags ILIKE ANY(ARRAY[${patterns}]))
           LIMIT 5
         `;
         if (chunks.length > 0) {
           parasaraContext = chunks
             .map(c => `[${c.source} | ${c.chapter} | ${c.title}]\n${c.content.length > 800 ? c.content.slice(0, 800) + '...' : c.content}`)
             .join('\n\n---\n\n');
-          console.log(`📚 Parasara context: ${chunks.length} chunks`);
+          console.log(`📚 ${knowledgeLabel || conversation.knowledgeSource} context: ${chunks.length} chunks`);
         }
+      } else {
+        console.log(`📚 No knowledge base selected for this conversation`);
       }
     } catch (err) {
-      console.error('Parasara search error:', err);
+      console.error('Knowledge base search error:', err);
     }
 
     // Build Master Prompt V5
@@ -2387,6 +2426,7 @@ app.post('/api/ai/chat6', withProfile, async (req, res) => {
       memory: '',
       rawData,
       parasaraContext,
+      knowledgeLabel,
     });
 
     let aiResponse = '';
