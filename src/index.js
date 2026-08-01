@@ -1790,13 +1790,25 @@ app.post('/api/astrology/ai-feed', withProfile, async (req, res) => {
 // AI Chat history endpoints
 app.get('/api/ai/knowledge-sources', getUser, async (req, res) => {
   try {
-    const sources = [];
-    for (const [key, cfg] of Object.entries(KNOWLEDGE_SOURCES)) {
-      const count = await prisma.knowledgeChunk.count({
-        where: { source: { in: cfg.sources } },
-      });
-      if (count > 0) sources.push({ key, label: cfg.label });
+    let counts = {};
+    try {
+      const rows = await prisma.$queryRaw`
+        SELECT source, COUNT(*)::int AS count
+        FROM knowledge_chunk
+        GROUP BY source
+      `;
+      counts = Object.fromEntries(rows.map((r) => [r.source, Number(r.count)]));
+    } catch (error) {
+      console.error('Knowledge chunk count query failed:', error.message);
     }
+    const sources = Object.entries(KNOWLEDGE_SOURCES).map(([key, cfg]) => ({
+      key,
+      label: cfg.label,
+      chunkCount: cfg.sources.reduce(
+        (acc, s) => acc + (counts[s] || 0),
+        0,
+      ),
+    }));
     res.json(sources);
   } catch (error) {
     res.status(500).json({ error: error.message });
