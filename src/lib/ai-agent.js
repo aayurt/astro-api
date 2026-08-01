@@ -761,7 +761,7 @@ export async function buildMasterPromptV4({ question, memory, rawData }) {
   return prompt;
 }
 
-export async function buildMasterPromptV5({ question, memory, rawData, parasaraContext, knowledgeLabel }) {
+export async function buildMasterPromptV5({ question, memory, rawData, parasaraContext, knowledgeLabel, knowledgeInstruction }) {
   console.log('🚀 Building Master Prompt V5 (HTML Output)...');
 
   // Reuse the logic from V4 for consistent enriched data
@@ -950,8 +950,13 @@ export async function buildMasterPromptV5({ question, memory, rawData, parasaraC
   const referenceIntro = knowledgeLabel
     ? `\nReference knowledge base for this conversation: ${knowledgeLabel}.`
     : '\nNo external Vedic text knowledge base is selected for this conversation; rely on the chart data and your general astrological knowledge.';
+  const knowledgeGuidance = knowledgeInstruction
+    ? `${knowledgeInstruction} Continue to use the full chart payload (natal, transit, vimsottari and yogini dashas) exactly as in the standard mode — the reference text grounds your reading but does not restrict it. No topic is off-limits; stay scoped to what the user asks (e.g., only delve into dashas or other deeper areas when the question calls for it).`
+    : knowledgeLabel
+      ? 'Use the reference text to ground your reading. Continue to use the full chart payload (natal, transit, vimsottari and yogini dashas) exactly as in the standard mode — the reference text grounds your reading but does not restrict it. No topic is off-limits; stay scoped to what the user asks.'
+      : '';
   const questionSection = parasaraContext
-    ? `## Vedic Text Reference\nQuote relevant verses from ${knowledgeLabel || 'the reference text'} by chapter name when applicable. Here is relevant context:\n\n${parasaraContext}\n\n## User Question\n${question}`
+    ? `## Vedic Text Reference\n${knowledgeGuidance}\n\nHere is relevant context:\n\n${parasaraContext}\n\n## User Question\n${question}`
     : `${question}${referenceIntro}`;
 
   let prompt = MASTER_PROMPT_TEMPLATE_SOULFUL_HTML.replace(

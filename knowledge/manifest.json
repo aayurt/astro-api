@@ -1,24 +1,31 @@
 {
   "files": [
     {
-      "path": "/Users/aayurtshrestha/Projects/supreme/googleDrive/brihatParasara/BRIHAT_PARASARA_HORA_SASTRA.md",
+      "path": "/Users/aayurtshrestha/Projects/self/astro/astro-api/mds/BRIHAT_PARASARA_HORA_SASTRA.md",
       "source": "bphs_vol1",
       "headingPattern": "^##\\s+(.+)$",
       "subHeadingPattern": "^###\\s+(.+)$",
       "maxChunkSize": 2500
     },
     {
-      "path": "/Users/aayurtshrestha/Projects/supreme/googleDrive/brihatParasara/BRIHAT_PARASARA_HORA_SASTRA_VOL2.md",
+      "path": "/Users/aayurtshrestha/Projects/self/astro/astro-api/mds/BRIHAT_PARASARA_HORA_SASTRA_VOL2.md",
       "source": "bphs_vol2",
       "headingPattern": "^##\\s+(.+)$",
       "subHeadingPattern": "^###\\s+(.+)$",
       "maxChunkSize": 2500
     },
     {
-      "path": "/Users/aayurtshrestha/Projects/supreme/googleDrive/brihatParasara/brihat_prasara_online_sumaary.md",
-      "source": "bphs_online",
-      "headingPattern": "^#\\s+(.+)$",
-      "subHeadingPattern": "^##\\s+(.+)$",
+      "path": "/Users/aayurtshrestha/Projects/self/astro/astro-api/mds/KALIDASA_UTTARA_KALAMRITA.md",
+      "source": "kalamrita",
+      "headingPattern": "^##\\s+(.+)$",
+      "subHeadingPattern": "^###\\s+(.+)$",
+      "maxChunkSize": 2500
+    },
+    {
+      "path": "/Users/aayurtshrestha/Projects/self/astro/astro-api/mds/RATNA_PRADEEP.md",
+      "source": "ratna_pradeep",
+      "headingPattern": "^##\\s+(.+)$",
+      "subHeadingPattern": "^###\\s+(.+)$",
       "maxChunkSize": 2500
     }
   ]

@@ -17,6 +17,7 @@ import {
   KNOWLEDGE_SOURCES,
   getSourceFilter,
   getSourceLabel,
+  getSourceInstruction,
 } from './lib/knowledge-sources.js';
 import { askQwen as askQwenLib } from './lib/qwen.js';
 import { GeminiWebService } from './services/gemini.js';
@@ -2390,6 +2391,7 @@ app.post('/api/ai/chat6', withProfile, async (req, res) => {
     // Search the conversation's selected knowledge base
     const knowledgeLabel = getSourceLabel(conversation.knowledgeSource);
     const sourceFilter = getSourceFilter(conversation.knowledgeSource);
+    const knowledgeInstruction = getSourceInstruction(conversation.knowledgeSource);
     let parasaraContext = '';
     try {
       const terms = message
@@ -2427,6 +2429,7 @@ app.post('/api/ai/chat6', withProfile, async (req, res) => {
       rawData,
       parasaraContext,
       knowledgeLabel,
+      knowledgeInstruction,
     });
 
     let aiResponse = '';
