@@ -1129,6 +1129,41 @@ app.post('/api/user/claim-coins', getUser, async (req, res) => {
   }
 });
 
+// Coupon redemption (sets coins to the coupon amount, never decreases)
+const COUPONS = {
+  '50': { coins: 50 },
+};
+
+app.post('/api/user/redeem-coupon', getUser, async (req, res) => {
+  try {
+    const { code } = req.body || {};
+    const coupon = COUPONS[String(code || '').trim().toUpperCase()];
+    if (!coupon) {
+      return res.status(400).json({ error: 'Invalid coupon code' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+    });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user.id },
+      data: { coins: Math.max(user.coins, coupon.coins) },
+    });
+
+    res.json({
+      success: true,
+      coins: updatedUser.coins,
+      coupon: { code: String(code).trim().toUpperCase(), coins: coupon.coins },
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ─── Profile Endpoints ──────────────────────────────────────────────
 
 app.get('/api/user/profiles', getUser, async (req, res) => {
