@@ -20,6 +20,12 @@ export const KNOWLEDGE_SOURCES = {
     instruction:
       'Ratna Pradeep is a classic prose treatise on gems (ratna-shastra). Cite by Chapter name; the text is prose, so quote key passages rather than verse numbers.',
   },
+  hinduPredictive: {
+    label: 'Hindu Predictive Astrology',
+    sources: ['hindu_predictive'],
+    instruction:
+      'Hindu Predictive Astrology is a classic modern treatise on Indian predictive astrology (prashna/jataka). Cite by Chapter name; the text is prose, so reference chapters and key passages rather than verse numbers.',
+  },
 };
 
 export const getSourceFilter = (key) => {

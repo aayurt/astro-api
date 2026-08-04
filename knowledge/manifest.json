@@ -27,6 +27,13 @@
       "headingPattern": "^##\\s+(.+)$",
       "subHeadingPattern": "^###\\s+(.+)$",
       "maxChunkSize": 2500
+    },
+    {
+      "path": "/Users/aayurtshrestha/Projects/self/astro/astro-api/mds/HINDU_PREDICTIVE_ASTROLOGY.md",
+      "source": "hindu_predictive",
+      "headingPattern": "^##\\s+(.+)$",
+      "subHeadingPattern": "^###\\s+(.+)$",
+      "maxChunkSize": 2500
     }
   ]
 }
