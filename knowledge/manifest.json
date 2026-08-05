@@ -34,6 +34,13 @@
       "headingPattern": "^##\\s+(.+)$",
       "subHeadingPattern": "^###\\s+(.+)$",
       "maxChunkSize": 2500
+    },
+    {
+      "path": "/Users/aayurtshrestha/Projects/self/astro/astro-api/mds/LALKITAB.md",
+      "source": "lalkitab",
+      "headingPattern": "^##\\s+(.+)$",
+      "subHeadingPattern": "^###\\s+(.+)$",
+      "maxChunkSize": 2500
     }
   ]
 }

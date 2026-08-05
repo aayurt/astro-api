@@ -26,6 +26,12 @@ export const KNOWLEDGE_SOURCES = {
     instruction:
       'Hindu Predictive Astrology is a classic modern treatise on Indian predictive astrology (prashna/jataka). Cite by Chapter name; the text is prose, so reference chapters and key passages rather than verse numbers.',
   },
+  lalKitab: {
+    label: 'Lal Kitab (Red Book)',
+    sources: ['lalkitab'],
+    instruction:
+      'Lal Kitab is the Lal Kitab (Red Book) of Astrology with Remedies, a modern treatise in the Lal Kitab tradition (a verse-less, remedy-oriented system). Cite by Chapter name and, where applicable, the planet/section (e.g., the chapter on a specific planet or conjunction). Use its unique concepts (fixed houses, combined/fixed-house significations, debts, remedy-based corrections) when relevant. The text is prose, so quote key passages rather than verse numbers.',
+  },
 };
 
 export const getSourceFilter = (key) => {
