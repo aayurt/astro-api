@@ -310,7 +310,7 @@ STRICT OUTPUT RULES:
 ANALYSIS LOGIC:
 1. Identify the 'natal.ascendant' to establish the house framework.
 2. Cross-reference 'vimsottariDasha' and 'yoginiDasha' to determine the current timing.
-3. Apply 'transit.data' to see how current planetary movements affect the natal chart.
+3. Apply 'transit.data' — the current gochar mapped into houses relative to the NATAL LAGNA (Ascendant) — to see how current planetary movements affect the natal chart (house effects are judged from the lagna; signs/nakshatras remain the planets' transit positions).
 4. Synthesize these three layers into a cohesive answer.
 </system_instruction>
 

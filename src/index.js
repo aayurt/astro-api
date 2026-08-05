@@ -1743,6 +1743,13 @@ const prepareAstroRawData = async (user) => {
     getYoginiDasha(new Date(currentUser.birthDate)),
   ]);
 
+  // AI transit is judged in the lagna-gochar frame (houses relative to the natal
+  // lagna), so replace the global transit-chart houses with the lagna frame.
+  const lagnaSign = natal?.Ascendant?.current_sign;
+  const aiTransit = lagnaSign
+    ? shiftChartRelativeTo(transit, lagnaSign)
+    : transit;
+
   // Save fetched data to DB for other endpoints that use it
   const existing = user?._skipAstroCache
     ? null
@@ -1788,7 +1795,7 @@ const prepareAstroRawData = async (user) => {
     natal,
     vimsottari: { activeMahaDasha, activeAntarDasha, allDashas: mahaDashas },
     yogini: { activeYogini, activeYoginiAntar, allDashas: yoginiDashas },
-    transit,
+    transit: aiTransit,
     aiPersona: existing?.aiPersona,
   };
 };
